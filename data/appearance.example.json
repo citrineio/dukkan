@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "zaman-menu-oct-2026",
+  "colors": {
+    "background": "#0C1018",
+    "rail": "#12161E",
+    "surface": "#171D28",
+    "elevated": "#202A37",
+    "accent": "#EAC28D",
+    "accentStrong": "#F0D4A8",
+    "installed": "#88A8C9",
+    "text": "#F0E5D6",
+    "muted": "#BBC6D3",
+    "border": "#5D718C"
+  },
+  "shape": {
+    "cornerRadius": 20
+  },
+  "motion": {
+    "focusMs": 210
+  }
+}

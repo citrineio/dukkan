@@ -1,0 +1,33 @@
+# CMake / generated binaries
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
+*.app/
+
+# Python test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editors / local settings
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Runtime cache and logs
+.cache/
+*.log
+*.mp4
