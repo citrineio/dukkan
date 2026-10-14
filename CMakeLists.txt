@@ -26,6 +26,7 @@ qt_add_resources(dukkan "dukkan_assets"
         qml/GameTile.qml
         qml/ControlHint.qml
         data/games.json
+        tools/flatpak-transaction.py
 )
 
 target_link_libraries(dukkan PRIVATE

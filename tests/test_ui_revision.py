@@ -33,7 +33,7 @@ class UiRevisionTests(unittest.TestCase):
     def test_protected_transaction_and_progress_states(self):
         self.assertIn('Q_PROPERTY(int progressPercent', HEADER)
         self.assertIn('Q_PROPERTY(QString progressStage', HEADER)
-        self.assertIn('void StoreBackend::consumeProgressOutput', STORE)
+        self.assertIn('void StoreBackend::consumeRelayOutput', STORE)
         self.assertIn('store.progressPercent < 0', QML)
         self.assertIn('NumberAnimation {', QML)
         self.assertIn('CURRENT STEP', QML)

@@ -27,17 +27,20 @@ class PrototypeContractTests(unittest.TestCase):
     def test_flatpak_uses_user_installation_and_arch_filter(self):
         self.assertIn('QStringLiteral("--user")', self.backend)
         self.assertIn('QStringLiteral("--arch=aarch64")', self.backend)
-        self.assertIn('QStringLiteral("--columns=application")', self.backend)
+        self.assertIn('QStringLiteral("--columns=ref:f,download-size")', self.backend)
 
     def test_transactions_do_not_spawn_a_shell_or_delete_data(self):
         self.assertNotIn("/bin/sh", self.backend)
         self.assertNotIn("bash -c", self.backend)
         self.assertNotIn("--delete-data", self.backend)
         self.assertIn("findGame(id)", self.backend)
-        self.assertIn('QStringLiteral("--noninteractive")', self.backend)
+        self.assertIn(':/tools/flatpak-transaction.py', self.backend)
+        relay = (ROOT / "tools/flatpak-transaction.py").read_text()
+        self.assertIn('--assumeyes', relay)
 
     def test_ui_requires_confirmation_and_checks_remote(self):
-        self.assertIn('modal = selectedGame.installed ? "remove" : "install"', self.qml)
+        self.assertIn('modal = "install"', self.qml)
+        self.assertIn('modal = "remove"', self.qml)
         self.assertIn("store.availabilityChecked", self.qml)
         self.assertIn("store.installGame(pendingId)", self.qml)
         self.assertIn("store.removeGame(pendingId)", self.qml)

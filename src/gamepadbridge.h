@@ -29,7 +29,7 @@ private:
 #ifdef DUKKAN_HAS_SDL2
     SDL_GameController *m_controller = nullptr;
     void openController();
-    QString m_heldAxis;
-    int m_axisDelay = 0;
+    QString m_heldDirection;
+    int m_directionDelay = 0;
 #endif
 };

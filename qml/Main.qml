@@ -31,7 +31,8 @@ ApplicationWindow {
     property string section: "Discover"
     property int selectedIndex: 0
     property int navIndex: 0
-    property string focusArea: "catalog" // catalog | nav | details | dialog | keyboard
+    property string focusArea: "catalog" // catalog | hero | nav | details | dialog | keyboard
+    property int detailAction: 0 // 0 Play/Install, 1 Uninstall
     property bool detailsOpen: false
     property bool keyboardOpen: false
     property string modal: ""
@@ -41,15 +42,22 @@ ApplicationWindow {
     property string searchQuery: ""
     property int keyRow: 0
     property int keyColumn: 0
+    property int keyboardView: 0 // lower | upper | symbols
     property bool enableGamepadActions: active
     readonly property real uiScale: Math.max(0.72, Math.min(1.25, height / 1080))
     function px(n) { return Math.round(n * uiScale) }
-    readonly property var keyRows: [
-        ["A","B","C","D","E","F","G","H","I","J"],
-        ["K","L","M","N","O","P","Q","R","S","T"],
-        ["U","V","W","X","Y","Z","0","1","2","3"],
-        ["4","5","6","7","8","9","SPACE","⌫","CLEAR","DONE"]
+    readonly property var keyRows: keyboardView === 2 ? [
+        ["!","@","#","$","%","^","&","*","(",")"],
+        ["-","_","=","+","[","]","{","}","\\","⌫"],
+        [";",":","'","\"",",",".","<",">","/","?"],
+        ["`","~","|","0","1","2","3","SPACE","CLEAR","DONE"]
+    ] : [
+        keyboardView === 1 ? ["Q","W","E","R","T","Y","U","I","O","P"] : ["q","w","e","r","t","y","u","i","o","p"],
+        keyboardView === 1 ? ["A","S","D","F","G","H","J","K","L","⌫"] : ["a","s","d","f","g","h","j","k","l","⌫"],
+        keyboardView === 1 ? ["Z","X","C","V","B","N","M","1","2","3"] : ["z","x","c","v","b","n","m","1","2","3"],
+        ["4","5","6","7","8","9","0","SPACE","CLEAR","DONE"]
     ]
+    readonly property string keyboardViewLabel: keyboardView === 0 ? "lowercase" : keyboardView === 1 ? "UPPERCASE" : "symbols"
     property var visibleGames: {
         var result = []
         var query = searchQuery.trim().toLowerCase()
@@ -65,17 +73,22 @@ ApplicationWindow {
     property var selectedGame: visibleGames.length > 0
         ? visibleGames[Math.max(0, Math.min(selectedIndex, visibleGames.length - 1))] : null
     property string modalTitle: modal === "install" ? "Install this game?"
-        : modal === "remove" ? "Remove from your library?" : "Stop this download?"
+        : modal === "remove" ? "Uninstall this game?" : "Stop this download?"
     property string modalMessage: modal === "install"
-        ? "Dukkan will install " + pendingName + " from Flathub. Additional runtimes may be required."
+        ? "Dukkan will install " + pendingName + " from Flathub. "
+          + (selectedGame && selectedGame.downloadSize ? "App download: " + selectedGame.downloadSize + ". " : "App download size unavailable. ")
+          + "Additional runtimes may require more data."
         : modal === "remove"
-        ? "Remove " + pendingName + " from this device? Saved application data will be retained."
+        ? "Uninstall " + pendingName + " from this device? Saved application data will be retained."
         : "Request cancellation of the current Flatpak transaction? It may take a moment."
     property string negativeLabel: modal === "cancel" ? "Keep running" : "Go back"
-    property string positiveLabel: modal === "install" ? "Install game" : modal === "remove" ? "Remove game" : "Request stop"
+    property string positiveLabel: modal === "install" ? "Install game" : modal === "remove" ? "Uninstall game" : "Request stop"
 
     onVisibleGamesChanged: {
         if (selectedIndex >= visibleGames.length) selectedIndex = Math.max(0, visibleGames.length - 1)
+    }
+    onSelectedGameChanged: {
+        if (!selectedGame || !selectedGame.installed) detailAction = 0
     }
     function leaveStore() {
         if (store.busy) { requestCancel(); return }
@@ -94,14 +107,24 @@ ApplicationWindow {
         if (!selectedGame) return
         detailsOpen = true
         focusArea = "details"
+        detailAction = 0
         descriptionFlick.contentY = 0
     }
     function requestGameAction() {
-        if (!selectedGame || store.busy) return
+        if (!selectedGame || store.busy || store.launchBusy || store.removalCheck) return
+        if (selectedGame.installed) { store.playGame(selectedGame.id); return }
         if (!selectedGame.installed && (!store.availabilityChecked || !selectedGame.available)) return
         pendingId = selectedGame.id
         pendingName = selectedGame.name
-        modal = selectedGame.installed ? "remove" : "install"
+        modal = "install"
+        modalChoice = 0
+        focusArea = "dialog"
+    }
+    function requestUninstall() {
+        if (!selectedGame || !selectedGame.installed || store.busy || store.launchBusy || store.removalCheck) return
+        pendingId = selectedGame.id
+        pendingName = selectedGame.name
+        modal = "remove"
         modalChoice = 0
         focusArea = "dialog"
     }
@@ -127,6 +150,7 @@ ApplicationWindow {
     function openKeyboard() {
         if (detailsOpen || modal !== "") return
         keyboardOpen = true
+        keyboardView = 0
         keyRow = 0
         keyColumn = 0
         focusArea = "keyboard"
@@ -142,10 +166,11 @@ ApplicationWindow {
         if (label === "SPACE") searchQuery += " "
         else if (label === "⌫") searchQuery = searchQuery.slice(0, -1)
         else if (label === "CLEAR") searchQuery = ""
-        else searchQuery += label.toLowerCase()
+        else searchQuery += label
         selectedIndex = 0
         shelf.positionViewAtBeginning()
     }
+    function cycleKeyboardView() { keyboardView = (keyboardView + 1) % 3 }
     function keyMove(direction) {
         if (direction === "left") keyColumn = Math.max(0, keyColumn - 1)
         else if (direction === "right") keyColumn = Math.min(keyRows[keyRow].length - 1, keyColumn + 1)
@@ -165,6 +190,7 @@ ApplicationWindow {
             if (["left","right","up","down"].indexOf(action) !== -1) keyMove(action)
             else if (action === "select") keyActivate(keyRows[keyRow][keyColumn])
             else if (action === "refresh") keyActivate("⌫")
+            else if (action === "library") cycleKeyboardView()
             else if (action === "back" || action === "search") closeKeyboard()
             return
         }
@@ -180,7 +206,9 @@ ApplicationWindow {
         if (action === "search") { openKeyboard(); return }
         if (detailsOpen) {
             if (action === "back") { detailsOpen = false; focusArea = "catalog" }
-            else if (action === "select") requestGameAction()
+            else if (action === "select") { if (detailAction === 1) requestUninstall(); else requestGameAction() }
+            else if (action === "left") detailAction = 0
+            else if (action === "right" && selectedGame && selectedGame.installed) detailAction = 1
             else if (action === "down") descriptionFlick.contentY = Math.max(0, Math.min(descriptionFlick.contentHeight - descriptionFlick.height, descriptionFlick.contentY + px(145)))
             else if (action === "up") descriptionFlick.contentY = Math.max(0, descriptionFlick.contentY - px(145))
             return
@@ -193,8 +221,15 @@ ApplicationWindow {
             else if (action === "back") focusArea = "catalog"
             return
         }
+        if (focusArea === "hero") {
+            if (action === "select") openDetails()
+            else if (action === "down") focusArea = "catalog"
+            else if (action === "left") focusArea = "nav"
+            else if (action === "back") focusArea = "catalog"
+            return
+        }
         if (action === "left" || action === "right") navigateShelf(action)
-        else if (action === "up") focusArea = "nav"
+        else if (action === "up") focusArea = selectedGame ? "hero" : "nav"
         else if (action === "select") openDetails()
         else if (action === "back") { if (section !== "Discover") changeSection("Discover"); else leaveStore() }
     }
@@ -313,7 +348,7 @@ ApplicationWindow {
                             height: px(62)
                             radius: px(12)
                             readonly property bool highlighted: root.focusArea === "nav" && root.navIndex === index && !root.detailsOpen
-                            color: highlighted ? zamanTheme.accent : (root.section === modelData ? "#28303A" : "transparent")
+                            color: highlighted ? zamanTheme.accent : "transparent"
                             border.color: highlighted ? zamanTheme.accent : "transparent"
                             Behavior on color { ColorAnimation { duration: zamanTheme.focusMs } }
                             Rectangle { x: 0; y: (parent.height - height) / 2; width: px(4); height: px(34); radius: 2; visible: root.section === modelData && !parent.highlighted; color: zamanTheme.accent }
@@ -398,17 +433,20 @@ ApplicationWindow {
                             }
                             Item { Layout.fillHeight: true }
                             Rectangle {
+                                id: heroButton
                                 Layout.preferredWidth: px(231)
                                 Layout.preferredHeight: px(58)
                                 radius: px(12)
-                                color: root.selectedGame ? zamanTheme.accent : zamanTheme.elevated
+                                color: root.focusArea === "hero" ? zamanTheme.accentStrong : root.selectedGame ? zamanTheme.accent : zamanTheme.elevated
+                                border.color: root.focusArea === "hero" ? "#FFFFFF" : "transparent"
+                                border.width: root.focusArea === "hero" ? 3 : 0
                                 Row {
                                     anchors.centerIn: parent
                                     spacing: px(12)
                                     Text { text: "VIEW GAME"; color: root.selectedGame ? "#29221C" : zamanTheme.muted; font.pixelSize: px(16); font.weight: Font.Bold; y: (parent.height - height) / 2 }
                                     Text { text: "↗"; color: root.selectedGame ? "#29221C" : zamanTheme.muted; font.pixelSize: px(25); y: (parent.height - height) / 2 }
                                 }
-                                MouseArea { anchors.fill: parent; enabled: !!root.selectedGame; onClicked: root.openDetails() }
+                                MouseArea { anchors.fill: parent; enabled: !!root.selectedGame; onClicked: { root.focusArea = "hero"; root.openDetails() } }
                             }
                             Item { Layout.preferredHeight: px(7) }
                         }
@@ -492,7 +530,7 @@ ApplicationWindow {
                 anchors.leftMargin: px(18)
                 anchors.rightMargin: px(18)
                 spacing: px(16)
-                Text { text: "DOWNLOADING"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.Bold; font.letterSpacing: 1.2 }
+                Text { text: store.operation === "install" ? "INSTALLING" : "UNINSTALLING"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.Bold; font.letterSpacing: 1.2 }
                 Text { text: store.progressStage || store.activity; color: zamanTheme.text; font.pixelSize: px(14); Layout.preferredWidth: px(300); elide: Text.ElideRight }
                 Rectangle {
                     Layout.fillWidth: true
@@ -633,6 +671,16 @@ ApplicationWindow {
                             Text { id: metadataLabel; anchors.centerIn: parent; text: root.selectedGame ? (root.selectedGame.metadataSource === "online" ? "FLATHUB · LIVE METADATA" : root.selectedGame.metadataSource === "cache" ? "CACHED METADATA" : "CURATED FALLBACK DATA") : ""; color: zamanTheme.muted; font.pixelSize: px(12); font.weight: Font.Medium }
                         }
                     }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: !!root.selectedGame && !root.selectedGame.installed
+                        text: root.selectedGame && root.selectedGame.downloadSize
+                            ? "APP DOWNLOAD  " + root.selectedGame.downloadSize + "  ·  RUNTIMES EXTRA"
+                            : "APP DOWNLOAD SIZE UNAVAILABLE  ·  RUNTIMES EXTRA"
+                        color: zamanTheme.muted
+                        font.pixelSize: px(14)
+                        elide: Text.ElideRight
+                    }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#35404E" }
                     Text { text: "ABOUT THE GAME"; color: zamanTheme.muted; font.pixelSize: px(13); font.weight: Font.DemiBold; font.letterSpacing: 1.5 }
                     Flickable {
@@ -654,30 +702,46 @@ ApplicationWindow {
                             lineHeight: 1.25
                         }
                     }
-                    Rectangle {
+                    RowLayout {
                         Layout.fillWidth: true
+                        Layout.fillHeight: false
                         Layout.preferredHeight: px(72)
-                        radius: px(13)
-                        color: store.busy || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) ? zamanTheme.elevated : zamanTheme.accent
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: px(12)
+                        Layout.minimumHeight: px(72)
+                        Layout.maximumHeight: px(72)
+                        spacing: px(13)
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: px(13)
+                            color: store.busy || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.elevated : zamanTheme.accent
+                            border.color: root.detailAction === 0 ? zamanTheme.accentStrong : "transparent"
+                            border.width: root.detailAction === 0 ? 3 : 0
                             Text {
-                                y: (parent.height - height) / 2
-                                text: store.busy ? "TRANSACTION IN PROGRESS"
+                                anchors.centerIn: parent
+                                text: store.busy ? "TRANSACTION IN PROGRESS" : store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
                                       : !root.selectedGame ? "SELECT A GAME"
-                                      : root.selectedGame.installed ? "REMOVE FROM DEVICE"
+                                      : root.selectedGame.installed ? "PLAY"
                                       : !store.availabilityChecked ? "CHECKING AVAILABILITY"
                                       : root.selectedGame.available ? "INSTALL FROM FLATHUB" : "NOT AVAILABLE ON ARM64"
-                                color: store.busy || (!root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available)) ? zamanTheme.text : "#29221C"
+                                color: store.busy || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.text : "#29221C"
                                 font.pixelSize: px(19)
                                 font.weight: Font.DemiBold
                             }
-                            Text { text: "→"; color: zamanTheme.bg; font.pixelSize: px(27); y: (parent.height - height) / 2; visible: !store.busy }
+                            MouseArea { anchors.fill: parent; enabled: !store.busy && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 0; root.requestGameAction() } }
                         }
-                        MouseArea { anchors.fill: parent; enabled: !store.busy; onClicked: root.requestGameAction() }
+                        Rectangle {
+                            Layout.preferredWidth: px(205)
+                            Layout.fillHeight: true
+                            visible: !!root.selectedGame && root.selectedGame.installed
+                            radius: px(13)
+                            color: root.detailAction === 1 ? zamanTheme.accent : zamanTheme.elevated
+                            border.color: root.detailAction === 1 ? zamanTheme.accentStrong : "#506070"
+                            border.width: root.detailAction === 1 ? 3 : 1
+                            Text { anchors.centerIn: parent; text: "UNINSTALL"; color: root.detailAction === 1 ? "#29221C" : zamanTheme.text; font.pixelSize: px(18); font.weight: Font.DemiBold }
+                            MouseArea { anchors.fill: parent; enabled: !store.busy && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 1; root.requestUninstall() } }
+                        }
                     }
-                    Text { text: store.busy ? "X  Request stop" : "A  Select action    ·    B  Back    ·    ↑ / ↓  Scroll description"; color: zamanTheme.muted; font.pixelSize: px(13) }
+                    Text { text: store.busy ? "X  Request stop" : "← / →  Choose action    ·    A  Select    ·    B  Back    ·    ↑ / ↓  Scroll description"; color: zamanTheme.muted; font.pixelSize: px(13) }
                 }
             }
         }
@@ -746,7 +810,10 @@ ApplicationWindow {
             else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.keyActivate(root.keyRows[root.keyRow][root.keyColumn]); event.accepted = true }
             else if (event.key === Qt.Key_Backspace) { root.keyActivate("⌫"); event.accepted = true }
             else if (event.key === Qt.Key_Escape) { root.closeKeyboard(); event.accepted = true }
-            else if (event.text.length === 1 && /[a-zA-Z0-9 ]/.test(event.text)) { root.keyActivate(event.text === " " ? "SPACE" : event.text); event.accepted = true }
+            else if (!(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+                     && event.text.length === 1 && /^[\x20-\x7e]$/.test(event.text)) {
+                root.keyActivate(event.text === " " ? "SPACE" : event.text); event.accepted = true
+            }
         }
         MouseArea { anchors.fill: parent; onClicked: {} }
         Rectangle {
@@ -760,7 +827,12 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.margins: px(35)
                 spacing: px(16)
-                Text { text: "Search games"; font.pixelSize: px(32); font.weight: Font.DemiBold; color: zamanTheme.text }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Search games"; font.pixelSize: px(32); font.weight: Font.DemiBold; color: zamanTheme.text }
+                    Item { Layout.fillWidth: true }
+                    Text { text: "Y  " + root.keyboardViewLabel; font.pixelSize: px(17); color: zamanTheme.accent }
+                }
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: px(65)
@@ -795,7 +867,7 @@ ApplicationWindow {
                         }
                     }
                 }
-                Text { Layout.alignment: Qt.AlignHCenter; text: "D-PAD  Move     A  Type     X  Delete     B / START  Done"; color: zamanTheme.muted; font.pixelSize: px(14) }
+                Text { Layout.alignment: Qt.AlignHCenter; text: "D-PAD  Move     A  Type     Y  Change keyboard     X  Delete     B / START  Done"; color: zamanTheme.muted; font.pixelSize: px(14) }
             }
         }
     }

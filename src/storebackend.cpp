@@ -72,7 +72,6 @@ StoreBackend::~StoreBackend()
         }
     }
 }
-
 void StoreBackend::loadSeeds()
 {
     QFile f(QStringLiteral(":/data/games.json"));
@@ -107,6 +106,7 @@ QVariantList StoreBackend::games() const
         obj[QStringLiteral("tag")] = g.tag;
         obj[QStringLiteral("icon")] = g.icon;
         obj[QStringLiteral("screenshot")] = g.screenshot;
+        obj[QStringLiteral("downloadSize")] = g.downloadSize;
         obj[QStringLiteral("metadataSource")] = g.metadataSource;
         obj[QStringLiteral("installed")] = g.installed;
         obj[QStringLiteral("available")] = g.available;
@@ -211,42 +211,60 @@ void StoreBackend::refresh()
 {
     const int gen = ++m_listingGeneration;
     Q_UNUSED(gen);
-    setActivity(m_busy ? m_activity : QStringLiteral("Checking local Flatpak installation and Flathub availability…"));
+    const bool preserveActivity = m_refreshFromTransaction;
+    m_refreshFromTransaction = false;
+    if (!preserveActivity)
+        setActivity(m_busy ? m_activity : QStringLiteral("Checking local Flatpak installation and Flathub availability…"));
     startListing({QStringLiteral("list"), QStringLiteral("--user"), QStringLiteral("--app"),
-                  QStringLiteral("--columns=application")}, true);
+                  QStringLiteral("--columns=ref:f")}, true, preserveActivity);
     startListing({QStringLiteral("remote-ls"), QStringLiteral("--user"), QStringLiteral("--app"),
-                  QStringLiteral("--arch=aarch64"), QStringLiteral("--columns=application"),
-                  QStringLiteral("flathub")}, false);
+                  QStringLiteral("--arch=aarch64"), QStringLiteral("--columns=ref:f,download-size"),
+                  QStringLiteral("flathub")}, false, preserveActivity);
 }
 
-void StoreBackend::startListing(const QStringList &arguments, bool installedList)
+void StoreBackend::startListing(const QStringList &arguments, bool installedList, bool preserveActivity)
 {
     QProcess *p = new QProcess(this);
     const int gen = m_listingGeneration;
     connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, p, gen, installedList](int exitCode, QProcess::ExitStatus status) {
+            [this, p, gen, installedList, preserveActivity](int exitCode, QProcess::ExitStatus status) {
         if (gen == m_listingGeneration) {
             if (status == QProcess::NormalExit && exitCode == 0) {
                 const QString out = QString::fromUtf8(p->readAllStandardOutput());
                 const QStringList rows = out.split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
                                                    Qt::SkipEmptyParts);
                 QSet<QString> ids;
-                for (const QString &row : rows) ids.insert(row.trimmed());
+                QHash<QString, QString> sizes;
+                for (const QString &row : rows) {
+                    const QStringList columns = row.split(QLatin1Char('\t'));
+                    const QString ref = columns.first().trimmed();
+                    ids.insert(ref);
+                    if (!installedList && columns.size() >= 2) {
+                        const QString size = columns.at(1).trimmed();
+                        if (size.size() <= 32 && !size.isEmpty() && size.at(0).isDigit())
+                            sizes.insert(ref, size);
+                    }
+                }
                 for (auto &game : m_games) {
-                    if (installedList) game.installed = ids.contains(game.id);
-                    else game.available = ids.contains(game.id);
+                    const QString ref = game.id + QStringLiteral("/aarch64/stable");
+                    const bool exact = ids.contains(ref) || ids.contains(QStringLiteral("app/") + ref);
+                    if (installedList) game.installed = exact;
+                    else {
+                        game.available = exact;
+                        game.downloadSize = exact ? sizes.value(ref, sizes.value(QStringLiteral("app/") + ref)) : QString();
+                    }
                 }
                 if (!installedList) m_availabilityChecked = true;
                 emit gamesChanged();
-                if (!m_busy && !installedList)
+                if (!m_busy && !installedList && !preserveActivity)
                     setActivity(QStringLiteral("Catalog ready. Select a game to view details."));
             } else {
                 if (!installedList) {
                     m_availabilityChecked = false;
-                    for (auto &game : m_games) game.available = false;
+                    for (auto &game : m_games) { game.available = false; game.downloadSize.clear(); }
                     emit gamesChanged();
                 }
-                if (!m_busy)
+                if (!m_busy && !preserveActivity)
                     setActivity(installedList
                         ? QStringLiteral("Could not read installed applications. Check Flatpak installation.")
                         : QStringLiteral("Cannot verify aarch64 availability. Check the Flathub remote/network."));
@@ -254,8 +272,8 @@ void StoreBackend::startListing(const QStringList &arguments, bool installedList
         }
         p->deleteLater();
     });
-    connect(p, &QProcess::errorOccurred, this, [this, p, installedList](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart && !m_busy)
+    connect(p, &QProcess::errorOccurred, this, [this, p, installedList, preserveActivity](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart && !m_busy && !preserveActivity)
             setActivity(installedList
                 ? QStringLiteral("Flatpak executable not found.")
                 : QStringLiteral("Unable to query Flathub; is Flatpak installed?"));
@@ -274,49 +292,133 @@ void StoreBackend::installGame(const QString &id)
 void StoreBackend::removeGame(const QString &id)
 {
     Game *g = findGame(id);
-    if (!g || !g->installed || m_busy) return;
-    startTransaction(id, false);
+    if (!g || !g->installed || m_busy || m_launchBusy || m_removalCheck) return;
+    m_removalCheck = true;
+    emit launchChanged();
+    setActivity(QStringLiteral("Checking that the game has stopped…"));
+    QProcess *probe = new QProcess(this);
+    connect(probe, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, probe, id](int code, QProcess::ExitStatus status) {
+        if (!m_removalCheck) { probe->deleteLater(); return; }
+        const QString output = QString::fromUtf8(probe->readAllStandardOutput());
+        m_removalCheck = false;
+        emit launchChanged();
+        if (code != 0 || status != QProcess::NormalExit) {
+            setActivity(QStringLiteral("Uninstall unavailable: could not verify installed-game status."));
+        } else if (output.contains(QStringLiteral("phase=Starting")) ||
+                   output.contains(QStringLiteral("phase=Running")) ||
+                   output.contains(QStringLiteral("phase=Stopping")) ||
+                   output.contains(QStringLiteral("phase=CleanupFailed"))) {
+            setActivity(QStringLiteral("Close the managed game before uninstalling it."));
+        } else if (Game *game = findGame(id); game && game->installed && !m_busy) {
+            startTransaction(id, false);
+        }
+        probe->deleteLater();
+    });
+    connect(probe, &QProcess::errorOccurred, this, [this, probe](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart) return;
+        m_removalCheck = false;
+        emit launchChanged();
+        setActivity(QStringLiteral("Uninstall unavailable: zamanctl could not start."));
+        probe->deleteLater();
+    });
+    probe->start(qEnvironmentVariable("ZAMANCTL", "/usr/local/bin/zamanctl"),
+                 {QStringLiteral("installed-game"), QStringLiteral("status")});
+}
+
+void StoreBackend::playGame(const QString &id)
+{
+    Game *game = findGame(id);
+    if (!game || !game->installed || m_busy || m_launchBusy || m_removalCheck) return;
+    m_launchBusy = true;
+    emit launchChanged();
+    setActivity(QStringLiteral("Starting ") + game->name + QStringLiteral("…"));
+    QProcess *proc = new QProcess(this);
+    m_launch = proc;
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, proc](int code, QProcess::ExitStatus status) {
+        if (proc != m_launch) return;
+        const QString error = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+        m_launch = nullptr;
+        m_launchBusy = false;
+        emit launchChanged();
+        setActivity(code == 0 && status == QProcess::NormalExit
+            ? QStringLiteral("Game launch accepted.")
+            : QStringLiteral("Play failed: ") + (error.isEmpty() ? QStringLiteral("sessiond launch unavailable") : error.left(220)));
+        proc->deleteLater();
+    });
+    connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError error) {
+        if (proc != m_launch || error != QProcess::FailedToStart) return;
+        m_launch = nullptr;
+        m_launchBusy = false;
+        emit launchChanged();
+        setActivity(QStringLiteral("Play unavailable: zamanctl could not start."));
+        proc->deleteLater();
+    });
+    proc->start(qEnvironmentVariable("ZAMANCTL", "/usr/local/bin/zamanctl"),
+                {QStringLiteral("installed-game"), QStringLiteral("launch"), id});
 }
 
 void StoreBackend::startTransaction(const QString &id, bool install)
 {
-    if (m_busy) return;
+    if (m_busy || m_launchBusy || m_removalCheck) return;
     m_busy = true;
     m_activeGame = id;
     m_operation = install ? QStringLiteral("install") : QStringLiteral("remove");
     m_progressPercent = -1;
     m_progressStage = install ? QStringLiteral("Preparing installation…") : QStringLiteral("Preparing removal…");
     m_progressBuffer.clear();
+    m_relaySucceeded = false;
+    m_relayMessage.clear();
     emit progressChanged();
     emit transactionChanged();
     setActivity((install ? QStringLiteral("Installing ") : QStringLiteral("Removing ")) + id
                 + QStringLiteral("… This may take some time."));
+    if (!m_relayFile) {
+        m_relayFile = new QTemporaryFile(QDir::tempPath() + QStringLiteral("/dukkan-flatpak-XXXXXX.py"), this);
+        if (!m_relayFile->open()) {
+            m_relayFile->deleteLater();
+            m_relayFile = nullptr;
+            endTransaction(false, QStringLiteral("Could not prepare Flatpak progress relay"));
+            return;
+        }
+        QFile resource(QStringLiteral(":/tools/flatpak-transaction.py"));
+        if (!resource.open(QIODevice::ReadOnly)) {
+            m_relayFile->deleteLater();
+            m_relayFile = nullptr;
+            endTransaction(false, QStringLiteral("Flatpak progress relay resource is missing"));
+            return;
+        }
+        const QByteArray source = resource.readAll();
+        if (m_relayFile->write(source) != source.size() || !m_relayFile->flush()) {
+            m_relayFile->deleteLater();
+            m_relayFile = nullptr;
+            endTransaction(false, QStringLiteral("Could not write Flatpak progress relay"));
+            return;
+        }
+    }
     m_transaction = new QProcess(this);
-    m_transaction->setProcessChannelMode(QProcess::MergedChannels);
-    const QStringList args = install
-        ? QStringList{QStringLiteral("install"), QStringLiteral("--user"),
-                      QStringLiteral("--noninteractive"), QStringLiteral("--assumeyes"),
-                      QStringLiteral("--arch=aarch64"), QStringLiteral("flathub"), id}
-        : QStringList{QStringLiteral("uninstall"), QStringLiteral("--user"),
-                      QStringLiteral("--noninteractive"), QStringLiteral("--assumeyes"), id};
+    m_transaction->setProcessChannelMode(QProcess::SeparateChannels);
+    const QStringList args{m_relayFile->fileName(), install ? QStringLiteral("install") : QStringLiteral("uninstall"), id};
     QProcess *proc = m_transaction;
     connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
-        consumeProgressOutput(proc->readAllStandardOutput());
+        consumeRelayOutput(proc->readAllStandardOutput());
     });
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
             [this, proc](int code, QProcess::ExitStatus status) {
         if (proc != m_transaction) return;
-        const QString output = QString::fromUtf8(proc->readAllStandardOutput()).trimmed();
-        if (!output.isEmpty()) consumeProgressOutput(output.toUtf8());
-        endTransaction(code == 0 && status == QProcess::NormalExit, output);
+        consumeRelayOutput(proc->readAllStandardOutput());
+        const QString errors = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+        endTransaction(code == 0 && status == QProcess::NormalExit && m_relaySucceeded,
+                       m_relayMessage.isEmpty() ? errors : m_relayMessage);
         proc->deleteLater();
     });
     connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError error) {
         if (proc != m_transaction || error != QProcess::FailedToStart) return;
-        endTransaction(false, QStringLiteral("Could not start flatpak executable"));
+        endTransaction(false, QStringLiteral("Could not start Python progress relay"));
         proc->deleteLater();
     });
-    proc->start(QStringLiteral("flatpak"), args);
+    proc->start(QStringLiteral("/usr/bin/python3"), args);
 }
 
 void StoreBackend::endTransaction(bool success, const QString &details)
@@ -336,6 +438,7 @@ void StoreBackend::endTransaction(bool success, const QString &details)
         ? (op == QStringLiteral("install") ? QStringLiteral("Installed: ") : QStringLiteral("Removed: ")) + id
         : QStringLiteral("Transaction failed: ") + details.left(220));
     emit transactionFinished(id, op, success);
+    m_refreshFromTransaction = true;
     refresh();
 }
 
@@ -346,45 +449,29 @@ void StoreBackend::cancelTransaction()
     m_transaction->terminate();
 }
 
-
-// Flatpak's CLI emits human-readable progress (often with carriage returns).
-// Percentages are best-effort *current operation-step* values, NOT guaranteed
-// transaction totals; with no reliable percentage the QML bar stays indeterminate.
-void StoreBackend::inspectProgressLine(const QString &line)
+void StoreBackend::consumeRelayOutput(const QByteArray &data)
 {
-    QString readable = line.simplified();
-    readable.remove(QRegularExpression(QStringLiteral("\\x1B\\[[0-9;]*[A-Za-z]")));
-    if (readable.isEmpty()) return;
-    const QRegularExpression pctExpr(QStringLiteral("(?:^|[^0-9])([0-9]{1,3})\\s*%"));
-    const auto match = pctExpr.match(readable);
-    if (match.hasMatch()) {
-        bool valid = false;
-        const int pct = match.captured(1).toInt(&valid);
-        if (valid && pct >= 0 && pct <= 100) m_progressPercent = pct;
+    m_progressBuffer += data;
+    if (m_progressBuffer.size() > 65536)
+        m_progressBuffer = m_progressBuffer.right(32768);
+    int boundary;
+    while ((boundary = m_progressBuffer.indexOf('\n')) >= 0) {
+        const QByteArray row = m_progressBuffer.left(boundary);
+        m_progressBuffer.remove(0, boundary + 1);
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(row, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) continue;
+        const QJsonObject event = document.object();
+        const QString type = event.value(QStringLiteral("type")).toString();
+        if (type == QStringLiteral("progress")) {
+            const QString stage = event.value(QStringLiteral("stage")).toString();
+            if (!stage.isEmpty()) m_progressStage = stage;
+            const QJsonValue percent = event.value(QStringLiteral("percent"));
+            m_progressPercent = percent.isDouble() ? qBound(0, percent.toInt(), 100) : -1;
+            emit progressChanged();
+        } else if (type == QStringLiteral("result")) {
+            m_relaySucceeded = event.value(QStringLiteral("success")).toBool(false);
+            m_relayMessage = event.value(QStringLiteral("message")).toString();
+        }
     }
-    m_progressStage = readable.left(180);
-    emit progressChanged();
-    setActivity(m_progressStage);
-}
-
-void StoreBackend::consumeProgressOutput(const QByteArray &data)
-{
-    if (data.isEmpty()) return;
-    m_progressBuffer.append(data);
-    // Keep memory bounded even if a tool produces unbroken diagnostic output.
-    if (m_progressBuffer.size() > 8192)
-        m_progressBuffer = m_progressBuffer.right(4096);
-    const QString text = QString::fromUtf8(m_progressBuffer);
-    const int boundary = qMax(text.lastIndexOf(QLatin1Char('\n')),
-                              text.lastIndexOf(QLatin1Char('\r')));
-    if (boundary < 0) {
-        // A single un-terminated progress update may still include a percent.
-        if (text.contains(QLatin1Char('%'))) inspectProgressLine(text);
-        return;
-    }
-    const QString finished = text.left(boundary + 1);
-    m_progressBuffer = text.mid(boundary + 1).toUtf8();
-    const QStringList lines = finished.split(QRegularExpression(QStringLiteral("[\\r\\n]+")),
-                                             Qt::SkipEmptyParts);
-    if (!lines.isEmpty()) inspectProgressLine(lines.last());
 }

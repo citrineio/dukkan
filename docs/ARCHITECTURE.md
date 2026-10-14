@@ -28,13 +28,21 @@ The SDL2 bridge receives GameController events and emits QML actions only if Duk
 
 ## Important omissions
 
-1. No download-size estimate/preflight; game runtimes can consume gigabytes.
-2. Flatpak transactions are not yet structured/typed; CLI output is best-effort activity only.
-3. No automatic library sync into Pegasus or launch through `zaman-sessiond`.
+**Deferred by Kadhem on 14 October 2026:** the complete Flatpak transaction
+download estimate and the multi-screenshot detail gallery are future-release
+work. The current Sprint 2 closeout does not depend on either feature.
+
+1. Dukkan shows the app ref download size reported by Flathub when available. This is not a full transaction estimate: required runtimes and extensions can add substantial downloads. A preflight that totals the complete Flatpak transaction remains open.
+2. Flatpak transactions still use a CLI relay rather than a structured Flatpak API.
+   Sprint 2 reports observed per-operation progress, or an indeterminate state
+   when Flatpak does not provide a percentage.
+3. No automatic catalog export or library sync into Pegasus. Curated installed-game
+   launch through `zaman-sessiond` was added in Sprint 2.
 4. No application-permission explanation or security warning screen beyond install confirmation.
 5. No transactional retry queue or multiple concurrent installs.
 6. No verified compatibility grading (graphics, controls, performance).
 7. No dynamic theme packages.
+8. Multiple screenshots per game are deferred. The current catalog selects only the first usable Flathub screenshot (or an icon fallback). A future revision should show a navigable gallery on the detail page, preserve the source aspect ratio, and handle missing/offline images without blocking installation.
 
 ## Recommended v0.3 sequence
 

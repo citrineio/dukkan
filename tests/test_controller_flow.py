@@ -13,7 +13,7 @@ class ControllerFlowTests(unittest.TestCase):
 
     def test_card_selection_then_details_action(self):
         self.assertIn('else if (action === "select") openDetails()', QML)
-        self.assertIn('else if (action === "select") requestGameAction()', QML)
+        self.assertIn('else requestGameAction()', QML)
         self.assertIn('function requestGameAction()', QML)
         self.assertIn('store.availabilityChecked', QML)
 
@@ -36,8 +36,13 @@ class ControllerFlowTests(unittest.TestCase):
     def test_controller_keyboard_and_navigation_rail(self):
         for code in ('function openKeyboard()', 'function closeKeyboard()',
                      'function keyActivate(label)', 'function navigateShelf(direction)',
-                     'focusArea = "nav"', '"SPACE","⌫","CLEAR","DONE"'):
+                     'focusArea = "nav"', '"SPACE","CLEAR","DONE"'):
             self.assertIn(code, QML)
+        self.assertIn('["Q","W","E","R","T","Y","U","I","O","P"]', QML)
+        self.assertIn('function cycleKeyboardView()', QML)
+        self.assertIn('else if (action === "library") cycleKeyboardView()', QML)
+        self.assertIn('["!","@","#","$","%","^","&","*","(",")"]', QML)
+        self.assertIn('focusArea = "hero"', QML)
         self.assertIn('"START"; label: "Search"', QML)
         self.assertIn('"Y"; label: "Library"', QML)
 
