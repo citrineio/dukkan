@@ -37,7 +37,12 @@ void GamepadBridge::poll()
 #ifdef DUKKAN_HAS_SDL2
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_CONTROLLERDEVICEADDED) {
+        // SDL translates SIGTERM/SIGINT into SDL_QUIT. Handle it even while
+        // the Guide owns focus, so systemd does not wait for its kill timeout.
+        if (event.type == SDL_QUIT) {
+            QCoreApplication::quit();
+            return;
+        } else if (event.type == SDL_CONTROLLERDEVICEADDED) {
             openController();
         } else if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
             if (m_controller && !SDL_GameControllerGetAttached(m_controller)) {
