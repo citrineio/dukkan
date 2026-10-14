@@ -1,5 +1,7 @@
 # Dukkan
 
+See [Zaman managed storefront integration](docs/SESSION-INTEGRATION.md) for the paired source branches and device acceptance.
+
 **Dukkan** is an experimental, controller-first game storefront built for **Zaman OS**. It is a standalone **Qt 6 / Qt Quick (QML)** application that discovers a small curated selection of native Linux games from **Flathub** and installs them using the local **Flatpak CLI**.
 
 > **Status: early prototype (v0.3.1).** This is source code for testing and development, **not** a production-ready game store. Fullscreen session integration, stable controller handling, general Flathub search, background transactions, and game launching through Zaman OS are not finished.

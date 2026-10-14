@@ -14,6 +14,7 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Dukkan"));
     app.setOrganizationName(QStringLiteral("Kawn Electro"));
+    app.setDesktopFileName(QStringLiteral("com.kawnelectro.Dukkan"));
     app.setApplicationVersion(QStringLiteral("0.3.1"));
 
     StoreBackend store;
