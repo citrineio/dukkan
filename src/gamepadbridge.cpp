@@ -49,7 +49,8 @@ void GamepadBridge::poll()
                 SDL_GameControllerClose(m_controller);
                 m_controller = nullptr;
                 setConnected(false);
-                m_heldAxis.clear();
+                m_heldDirection.clear();
+                m_directionDelay = 0;
                 openController();
             }
         } else if (event.type == SDL_CONTROLLERBUTTONDOWN) {
@@ -60,34 +61,36 @@ void GamepadBridge::poll()
                 case SDL_CONTROLLER_BUTTON_X: name = QStringLiteral("refresh"); break;
                 case SDL_CONTROLLER_BUTTON_Y: name = QStringLiteral("library"); break;
                 case SDL_CONTROLLER_BUTTON_START: name = QStringLiteral("search"); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_UP: name = QStringLiteral("up"); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN: name = QStringLiteral("down"); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT: name = QStringLiteral("left"); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: name = QStringLiteral("right"); break;
                 default: break;
             }
             if (!name.isEmpty() && QGuiApplication::focusWindow()) emit action(name);
         }
     }
     if (!m_controller || !QGuiApplication::focusWindow()) {
-        m_heldAxis.clear();
-        m_axisDelay = 0;
+        m_heldDirection.clear();
+        m_directionDelay = 0;
         return;
     }
     const int x = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTX);
     const int y = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTY);
     QString direction;
-    if (qAbs(x) > qAbs(y) && qAbs(x) > 21000)
+    const bool up = SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_UP);
+    const bool down = SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+    const bool left = SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
+    const bool right = SDL_GameControllerGetButton(m_controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+    if (up != down) direction = up ? QStringLiteral("up") : QStringLiteral("down");
+    else if (left != right) direction = left ? QStringLiteral("left") : QStringLiteral("right");
+    else if (qAbs(x) > qAbs(y) && qAbs(x) > 21000)
         direction = x > 0 ? QStringLiteral("right") : QStringLiteral("left");
     else if (qAbs(y) > 21000)
         direction = y > 0 ? QStringLiteral("down") : QStringLiteral("up");
-    if (direction != m_heldAxis) {
-        m_heldAxis = direction;
-        m_axisDelay = 0;
+    if (direction != m_heldDirection) {
+        m_heldDirection = direction;
+        m_directionDelay = 0;
         if (!direction.isEmpty()) emit action(direction);
     } else if (!direction.isEmpty()) {
-        ++m_axisDelay;
-        if (m_axisDelay >= 10 && (m_axisDelay - 10) % 4 == 0)
+        ++m_directionDelay;
+        if (m_directionDelay >= 10 && (m_directionDelay - 10) % 4 == 0)
             emit action(direction);
     }
 #endif

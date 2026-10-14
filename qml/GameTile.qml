@@ -13,10 +13,8 @@ Rectangle {
 
     radius: 16 * scaleFactor
     color: chosen ? theme.elevated : theme.surface
-    border.width: chosen ? 3 : 1
+    border.width: chosen ? 2 : 1
     border.color: chosen ? theme.accent : "#364251"
-    scale: chosen ? 1.018 : 1.0
-    Behavior on scale { NumberAnimation { duration: theme.focusMs; easing.type: Easing.OutCubic } }
     Behavior on color { ColorAnimation { duration: theme.focusMs } }
     Behavior on border.color { ColorAnimation { duration: theme.focusMs } }
     clip: true
@@ -32,15 +30,6 @@ Rectangle {
         fallbackTitle: tile.game.name || "Game"
         backdrop: theme.elevated
         muted: theme.muted
-    }
-    Rectangle {
-        visible: tile.chosen
-        x: 14 * scaleFactor
-        y: 15 * scaleFactor
-        width: 53 * scaleFactor
-        height: 4 * scaleFactor
-        radius: 2
-        color: theme.accent
     }
     Text {
         x: 20 * scaleFactor
@@ -78,14 +67,14 @@ Rectangle {
             font.letterSpacing: 1
         }
     }
-    Rectangle {
-        visible: tile.chosen
+    Text {
+        visible: !tile.game.installed && !!tile.game.downloadSize
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        width: 44 * scaleFactor
-        height: 5 * scaleFactor
-        color: theme.accent
-        radius: 2
+        anchors.rightMargin: 20 * scaleFactor
+        y: parent.height - 28 * scaleFactor
+        text: "↓ " + (tile.game.downloadSize || "")
+        color: theme.muted
+        font.pixelSize: 12 * scaleFactor
     }
     MouseArea {
         anchors.fill: parent
