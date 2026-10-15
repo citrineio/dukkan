@@ -36,8 +36,11 @@ work. The current Sprint 2 closeout does not depend on either feature.
 2. Flatpak transactions still use a CLI relay rather than a structured Flatpak API.
    Sprint 2 reports observed per-operation progress, or an indeterminate state
    when Flatpak does not provide a percentage.
-3. No automatic catalog export or library sync into Pegasus. Curated installed-game
-   launch through `zaman-sessiond` was added in Sprint 2.
+3. Sprint 3 adds a paired, four-game Pegasus Native Games sync through
+   `zamanctl library sync` after verified transactions. The Zaman helper owns
+   its generated metadata and marker files; Dukkan does not edit Pegasus
+   configuration. The paired Zaman theme watches the helper's signal filename
+   and invokes Pegasus's in-process game-list reload after a changed sync.
 4. No application-permission explanation or security warning screen beyond install confirmation.
 5. No transactional retry queue or multiple concurrent installs.
 6. No verified compatibility grading (graphics, controls, performance).

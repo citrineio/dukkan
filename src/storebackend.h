@@ -82,6 +82,7 @@ private:
     void startTransaction(const QString &id, bool install);
     void setActivity(const QString &message);
     void endTransaction(bool success, const QString &details);
+    void syncPegasusLibrary(const QString &id, const QString &operation);
     void consumeRelayOutput(const QByteArray &data);
 
     QVector<Game> m_games;
@@ -104,4 +105,5 @@ private:
     bool m_availabilityChecked = false;
     bool m_refreshFromTransaction = false;
     int m_listingGeneration = 0;
+    int m_librarySyncGeneration = 0;
 };

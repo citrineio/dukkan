@@ -440,6 +440,37 @@ void StoreBackend::endTransaction(bool success, const QString &details)
     emit transactionFinished(id, op, success);
     m_refreshFromTransaction = true;
     refresh();
+    if (success) syncPegasusLibrary(id, op);
+}
+
+void StoreBackend::syncPegasusLibrary(const QString &id, const QString &operation)
+{
+    const int generation = ++m_librarySyncGeneration;
+    setActivity((operation == QStringLiteral("install") ? QStringLiteral("Installed: ")
+                : QStringLiteral("Removed: ")) + id + QStringLiteral(". Updating Pegasus library…"));
+    QProcess *sync = new QProcess(this);
+    connect(sync, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, sync, generation, id, operation](int code, QProcess::ExitStatus status) {
+        if (generation == m_librarySyncGeneration && !m_busy && !m_launchBusy) {
+            const QString result = (operation == QStringLiteral("install")
+                ? QStringLiteral("Installed: ") : QStringLiteral("Removed: ")) + id;
+            const QString error = QString::fromUtf8(sync->readAllStandardError()).trimmed();
+            setActivity(code == 0 && status == QProcess::NormalExit
+                ? result + QStringLiteral(". Pegasus library updated.")
+                : result + QStringLiteral(". Pegasus sync failed: ")
+                    + (error.isEmpty() ? QStringLiteral("run zamanctl library sync") : error.left(160)));
+        }
+        sync->deleteLater();
+    });
+    connect(sync, &QProcess::errorOccurred, this, [this, sync, generation, id](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart) return;
+        if (generation == m_librarySyncGeneration && !m_busy && !m_launchBusy)
+            setActivity(QStringLiteral("Transaction completed for ") + id
+                        + QStringLiteral(". Pegasus sync could not start; run zamanctl library sync."));
+        sync->deleteLater();
+    });
+    sync->start(qEnvironmentVariable("ZAMANCTL", "/usr/local/bin/zamanctl"),
+                {QStringLiteral("library"), QStringLiteral("sync")});
 }
 
 void StoreBackend::cancelTransaction()
