@@ -26,5 +26,12 @@
     "genre": "Simulation",
     "summary": "Build transportation networks and manage a growing business.",
     "tag": "SIMULATION"
+  },
+  {
+    "id": "org.opensurge2d.OpenSurge",
+    "name": "Surge Engine",
+    "genre": "Platformer",
+    "summary": "Play Surge the Rabbit, a retro platformer, and create your own games.",
+    "tag": "PLATFORMER"
   }
 ]

@@ -14,7 +14,7 @@ import sys
 import time
 
 APPS = {'org.supertuxproject.SuperTux', 'net.supertuxkart.SuperTuxKart',
-        'org.wesnoth.Wesnoth', 'org.openttd.OpenTTD'}
+        'org.wesnoth.Wesnoth', 'org.openttd.OpenTTD', 'org.opensurge2d.OpenSurge'}
 OSC = re.compile(rb'\x1b\]9;4;([01])(?:;([0-9]{1,3}))?(?:\x1b\\|\x07)')
 ANSI = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]')
 PERCENT = re.compile(rb'(?<!\d)([0-9]{1,3})\s*%')
