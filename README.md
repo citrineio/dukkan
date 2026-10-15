@@ -11,7 +11,7 @@ See [Zaman managed storefront integration](docs/SESSION-INTEGRATION.md) for the 
 
 ## Current functionality
 
-- Discover and Library views; curated game list (four game identifiers in `data/games.json`).
+- Discover and Library views; shared curated JSON catalog (`/usr/local/share/zaman/catalog.json`, supplied by zaman-sessiond).
 - Game descriptions and artwork retrieved from Flathub, with a local metadata cache and fallback descriptions.
 - Locally installed games recognized through Flatpak.
 - AArch64 remote availability checked before installations.
@@ -80,7 +80,7 @@ These Python tests are predominantly **static source/contract checks**. Passing 
 ## Repository layout
 
 ```text
-data/      Curated game catalog and example theme
+data/      Example theme (the shared game catalog lives in zaman-sessiond)
 qml/       Qt Quick frontend and reusable components
 src/       Qt/C++ catalog, Flatpak subprocess and input backend
 docs/      Architecture and design notes
@@ -102,3 +102,17 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/CHANGELOG.md`](doc
 Dukkan is independent of Bazaar and **does not include Bazaar source**. Game titles, screenshots, and descriptions obtained at runtime from Flathub are third-party content subject to their respective licenses and terms. This repository does not bundle the game binaries.
 
 Source code in this repository is offered under the [MIT License](LICENSE), copyright 2026 Kawn Electro. Dependencies retain their own licenses.
+
+## Shared catalog
+
+Dukkan reads `/usr/local/share/zaman/catalog.json` on startup and X/F5 refresh.
+`ZAMAN_CATALOG_PATH` can select an absolute development file. Install the shared
+reader `zaman_catalog.py` alongside sessiond's helpers in `/usr/local/libexec/zaman`
+for transactions; `ZAMAN_CATALOG_LIBEXEC` can select a development helper directory.
+No embedded game list is used. Only enabled IDs are displayed or authorized.
+Flathub still supplies live artwork and descriptions; optional catalog labels are
+offline fallbacks. A malformed/missing catalog displays an error and denies new
+actions. Existing gallery and live-progress behavior is retained.
+
+Build/deployment, schema, editing commands and rollback are documented in
+`zaman-sessiond/docs/shared-catalog.md` in the companion source checkout.

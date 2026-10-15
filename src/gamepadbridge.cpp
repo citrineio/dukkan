@@ -61,6 +61,8 @@ void GamepadBridge::poll()
                 case SDL_CONTROLLER_BUTTON_X: name = QStringLiteral("refresh"); break;
                 case SDL_CONTROLLER_BUTTON_Y: name = QStringLiteral("library"); break;
                 case SDL_CONTROLLER_BUTTON_START: name = QStringLiteral("search"); break;
+                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: name = QStringLiteral("previousImage"); break;
+                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: name = QStringLiteral("nextImage"); break;
                 default: break;
             }
             if (!name.isEmpty() && QGuiApplication::focusWindow()) emit action(name);

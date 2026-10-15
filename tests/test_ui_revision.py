@@ -16,7 +16,8 @@ class UiRevisionTests(unittest.TestCase):
         self.assertIn('showingScreenshot ? Math.max(0, parent.width - 12)', ART)
         self.assertIn('Math.min(parent.width * 0.50, 210)', ART)
         self.assertIn('screenshotUrl: tile.game.screenshot', TILE)
-        self.assertIn('"1248x702", "752x423", "624x351"', STORE)
+        artwork = (ROOT / 'src/gameartwork.cpp').read_text()
+        self.assertIn('"1248x702", "752x423", "624x351"', artwork)
 
     def test_new_console_information_hierarchy(self):
         for term in ('FEATURED  /  DISCOVER','Made to play','NAV', 'onActivated:',
@@ -34,9 +35,11 @@ class UiRevisionTests(unittest.TestCase):
         self.assertIn('Q_PROPERTY(int progressPercent', HEADER)
         self.assertIn('Q_PROPERTY(QString progressStage', HEADER)
         self.assertIn('void StoreBackend::consumeRelayOutput', STORE)
-        self.assertIn('store.progressPercent < 0', QML)
-        self.assertIn('NumberAnimation {', QML)
-        self.assertIn('CURRENT STEP', QML)
+        track = (ROOT / 'qml/ProgressTrack.qml').read_text()
+        progress = (ROOT / 'qml/TransactionProgress.qml').read_text()
+        self.assertIn('track.percent < 0', track)
+        self.assertIn('NumberAnimation {', track)
+        self.assertIn('CURRENT STEP', progress)
         self.assertIn('store.installGame(pendingId)', QML)
         self.assertIn('store.removeGame(pendingId)', QML)
 

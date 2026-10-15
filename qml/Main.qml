@@ -34,6 +34,11 @@ ApplicationWindow {
     property string focusArea: "catalog" // catalog | hero | nav | details | dialog | keyboard
     property int detailAction: 0 // 0 Play/Install, 1 Uninstall
     property bool detailsOpen: false
+    property bool galleryFullscreen: false
+    property int galleryIndex: 0
+    property string detailGameId: ""
+    readonly property var galleryImages: selectedGame ? (selectedGame.screenshots || []) : []
+    readonly property var galleryImage: galleryImages.length ? galleryImages[galleryIndex] : null
     property bool keyboardOpen: false
     property string modal: ""
     property int modalChoice: 0
@@ -72,6 +77,12 @@ ApplicationWindow {
     }
     property var selectedGame: visibleGames.length > 0
         ? visibleGames[Math.max(0, Math.min(selectedIndex, visibleGames.length - 1))] : null
+    readonly property string activeTransactionName: {
+        var games = store.games
+        for (var i = 0; i < games.length; ++i)
+            if (games[i].id === store.activeGame) return games[i].name
+        return "Game"
+    }
     property string modalTitle: modal === "install" ? "Install this game?"
         : modal === "remove" ? "Uninstall this game?" : "Stop this download?"
     property string modalMessage: modal === "install"
@@ -89,6 +100,25 @@ ApplicationWindow {
     }
     onSelectedGameChanged: {
         if (!selectedGame || !selectedGame.installed) detailAction = 0
+        var nextId = selectedGame ? selectedGame.id : ""
+        if (nextId !== detailGameId) {
+            detailGameId = nextId
+            galleryIndex = 0
+            galleryFullscreen = false
+        }
+    }
+    onGalleryImagesChanged: {
+        galleryIndex = Math.max(0, Math.min(galleryIndex, galleryImages.length - 1))
+        if (!galleryImages.length) galleryFullscreen = false
+    }
+    function moveGallery(delta) {
+        if (!detailsOpen || galleryImages.length < 2) return
+        galleryIndex = (galleryIndex + delta + galleryImages.length) % galleryImages.length
+        thumbnails.positionViewAtIndex(galleryIndex, ListView.Contain)
+    }
+    function openGallery() {
+        if (!detailsOpen || modal !== "" || !galleryImages.length) return
+        galleryFullscreen = true
     }
     function leaveStore() {
         if (store.busy) { requestCancel(); return }
@@ -100,18 +130,21 @@ ApplicationWindow {
         selectedIndex = 0
         searchQuery = ""
         detailsOpen = false
+        galleryFullscreen = false
         focusArea = "catalog"
         shelf.positionViewAtBeginning()
     }
     function openDetails() {
         if (!selectedGame) return
         detailsOpen = true
+        galleryFullscreen = false
+        galleryIndex = 0
         focusArea = "details"
         detailAction = 0
         descriptionFlick.contentY = 0
     }
     function requestGameAction() {
-        if (!selectedGame || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
         if (selectedGame.installed) { store.playGame(selectedGame.id); return }
         if (!selectedGame.installed && (!store.availabilityChecked || !selectedGame.available)) return
         pendingId = selectedGame.id
@@ -121,7 +154,7 @@ ApplicationWindow {
         focusArea = "dialog"
     }
     function requestUninstall() {
-        if (!selectedGame || !selectedGame.installed || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || !selectedGame.installed || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
         pendingId = selectedGame.id
         pendingName = selectedGame.name
         modal = "remove"
@@ -201,6 +234,22 @@ ApplicationWindow {
             else if (action === "back") dismissModal()
             return
         }
+        // Fullscreen is a separate input surface. Never let A/Y/X/Start reach
+        // the store actions underneath it. B restores the exact detail state.
+        if (galleryFullscreen) {
+            if (action === "back") galleryFullscreen = false
+            else if (action === "previousImage") moveGallery(-1)
+            else if (action === "nextImage") moveGallery(1)
+            return
+        }
+        if (detailsOpen && (action === "previousImage" || action === "nextImage")) {
+            moveGallery(action === "previousImage" ? -1 : 1)
+            return
+        }
+        if (detailsOpen && (action === "gallery" || action === "library")) {
+            openGallery()
+            return
+        }
         if (action === "refresh") { if (store.busy) requestCancel(); else store.refresh(); return }
         if (action === "library") { changeSection(section === "Library" ? "Discover" : "Library"); return }
         if (action === "search") { openKeyboard(); return }
@@ -242,6 +291,9 @@ ApplicationWindow {
     Shortcut { sequence: "Return"; enabled: !root.keyboardOpen; onActivated: root.handleAction("select") }
     Shortcut { sequence: "Enter"; enabled: !root.keyboardOpen; onActivated: root.handleAction("select") }
     Shortcut { sequence: "Escape"; enabled: !root.keyboardOpen; onActivated: root.handleAction("back") }
+    Shortcut { sequence: "PgUp"; enabled: !root.keyboardOpen; onActivated: root.handleAction("previousImage") }
+    Shortcut { sequence: "PgDown"; enabled: !root.keyboardOpen; onActivated: root.handleAction("nextImage") }
+    Shortcut { sequence: "Space"; enabled: root.detailsOpen && !root.keyboardOpen; onActivated: root.handleAction("gallery") }
     Shortcut { sequence: "Ctrl+Q"; onActivated: root.leaveStore() }
     Shortcut { sequence: "F5"; onActivated: root.handleAction("refresh") }
     Shortcut { sequence: "Ctrl+F"; onActivated: root.openKeyboard() }
@@ -517,63 +569,20 @@ ApplicationWindow {
             }
         }
 
-        // Transaction information is elevated into a persistent readable strip.
-        Rectangle {
+        // Each page owns one progress surface; details has its own inline view.
+        TransactionProgress {
+            objectName: "homeTransactionProgress"
             Layout.fillWidth: true
-            Layout.preferredHeight: store.busy ? px(56) : 0
-            visible: store.busy
-            color: zamanTheme.elevated
-            radius: px(12)
-            border.color: "#4B5765"
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: px(18)
-                anchors.rightMargin: px(18)
-                spacing: px(16)
-                Text { text: store.operation === "install" ? "INSTALLING" : "UNINSTALLING"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.Bold; font.letterSpacing: 1.2 }
-                Text { text: store.progressStage || store.activity; color: zamanTheme.text; font.pixelSize: px(14); Layout.preferredWidth: px(300); elide: Text.ElideRight }
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: px(8)
-                    color: "#343E4D"
-                    radius: px(4)
-                    clip: true
-                    Rectangle {
-                        visible: store.progressPercent >= 0
-                        width: parent.width * Math.max(0, Math.min(100, store.progressPercent)) / 100
-                        height: parent.height
-                        radius: px(4)
-                        color: zamanTheme.accent
-                        Behavior on width { NumberAnimation { duration: 180 } }
-                    }
-                    Rectangle {
-                        id: movingProgress
-                        visible: store.progressPercent < 0
-                        height: parent.height
-                        width: Math.max(px(80), parent.width * .28)
-                        radius: px(4)
-                        color: zamanTheme.accent
-                        NumberAnimation {
-                            target: movingProgress
-                            property: "x"
-                            from: -movingProgress.width
-                            to: movingProgress.parent ? movingProgress.parent.width : 800
-                            duration: 1350
-                            loops: Animation.Infinite
-                            running: store.busy && store.progressPercent < 0
-                        }
-                    }
-                }
-                Text { text: store.progressPercent < 0 ? "WORKING" : store.progressPercent + "% · CURRENT STEP"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.DemiBold }
-                Rectangle {
-                    Layout.preferredWidth: px(115)
-                    Layout.preferredHeight: px(35)
-                    radius: px(8)
-                    color: "#35404E"
-                    Text { anchors.centerIn: parent; text: "X  Stop"; color: zamanTheme.text; font.pixelSize: px(13) }
-                    MouseArea { anchors.fill: parent; onClicked: root.requestCancel() }
-                }
-            }
+            Layout.preferredHeight: visible ? implicitHeight : 0
+            visible: store.busy && !root.detailsOpen
+            transaction: store
+            gameName: root.activeTransactionName
+            scaleFactor: root.uiScale
+            accent: zamanTheme.accent
+            ink: zamanTheme.text
+            muted: zamanTheme.muted
+            surface: zamanTheme.elevated
+            onStopRequested: root.requestCancel()
         }
 
         RowLayout {
@@ -586,6 +595,27 @@ ApplicationWindow {
             ControlHint { button: "B"; label: "Back / exit"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "Y"; label: "Library"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "START"; label: "Search"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
+        }
+    }
+
+    Rectangle {
+        z: 35
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: px(8)
+        width: Math.min(parent.width - px(60), catalogMessage.implicitWidth + px(32))
+        height: catalogMessage.implicitHeight + px(18)
+        radius: px(6)
+        color: zamanTheme.elevated
+        visible: store.catalogError.length > 0
+        Text {
+            id: catalogMessage
+            anchors.centerIn: parent
+            width: parent.width - px(32)
+            text: store.catalogError
+            color: zamanTheme.accent
+            font.pixelSize: px(18)
+            wrapMode: Text.WordWrap
         }
     }
 
@@ -610,39 +640,113 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: px(58)
+                spacing: px(42)
                 Rectangle {
-                    Layout.preferredWidth: Math.min(root.width * .43, px(700))
+                    Layout.preferredWidth: (root.width - px(172)) * .56
                     Layout.fillHeight: true
                     radius: px(23)
                     color: zamanTheme.surface
                     border.color: "#374352"
-                    clip: true
-                    GameArt {
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: px(18)
-                        screenshotUrl: root.selectedGame ? root.selectedGame.screenshot : ""
-                        iconUrl: root.selectedGame ? root.selectedGame.icon : ""
-                        fallbackTitle: root.selectedGame ? root.selectedGame.name : "Dukkan"
-                        backdrop: zamanTheme.elevated
-                        muted: zamanTheme.muted
+                        spacing: px(16)
+                        Item { Layout.fillHeight: true }
+                        ScreenshotView {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: width * 9 / 16
+                            imageUrl: root.galleryImage ? root.galleryImage.url : ""
+                            ink: zamanTheme.muted
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: root.galleryImages.length > 0
+                                onClicked: root.openGallery()
+                            }
+                        }
+                        ListView {
+                            id: thumbnails
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: px(100)
+                            visible: root.galleryImages.length > 1
+                            orientation: ListView.Horizontal
+                            spacing: px(12)
+                            clip: true
+                            model: root.galleryImages
+                            delegate: Rectangle {
+                                required property int index
+                                required property var modelData
+                                width: px(160)
+                                height: px(96)
+                                radius: px(9)
+                                color: "transparent"
+                                // This marks the current image, not a second input focus.
+                                border.width: index === root.galleryIndex ? 2 : 0
+                                border.color: zamanTheme.muted
+                                ScreenshotView {
+                                    anchors.fill: parent
+                                    anchors.margins: px(4)
+                                    imageUrl: modelData.thumbnailUrl || modelData.url
+                                    decodeWidth: 320
+                                    decodeHeight: 180
+                                    ink: zamanTheme.muted
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: root.galleryIndex = index
+                                    onDoubleClicked: { root.galleryIndex = index; root.openGallery() }
+                                }
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.galleryImage ? root.galleryImage.caption : ""
+                            visible: text.length > 0
+                            color: zamanTheme.muted
+                            font.pixelSize: px(16)
+                            elide: Text.ElideRight
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: px(40)
+                            visible: root.galleryImages.length > 0
+                            GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale;
+                                text: "L1  Previous"
+                                enabled: root.galleryImages.length > 1
+                                focusPolicy: Qt.NoFocus
+                                onClicked: root.moveGallery(-1)
+                            }
+                            Item { Layout.fillWidth: true }
+                            Text { text: (root.galleryIndex + 1) + " / " + root.galleryImages.length; color: zamanTheme.text; font.pixelSize: px(18) }
+                            Item { Layout.fillWidth: true }
+                            GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale;
+                                text: "R1  Next"
+                                enabled: root.galleryImages.length > 1
+                                focusPolicy: Qt.NoFocus
+                                onClicked: root.moveGallery(1)
+                            }
+                        }
+                        GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale;
+                            Layout.alignment: Qt.AlignHCenter
+                            visible: root.galleryImages.length > 0
+                            text: "Y  View fullscreen"
+                            focusPolicy: Qt.NoFocus
+                            onClicked: root.openGallery()
+                        }
+                        Item { Layout.fillHeight: true }
                     }
-                    Rectangle { x: px(30); y: px(27); width: px(58); height: px(5); radius: 2; color: zamanTheme.accent }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     spacing: px(14)
                     Text { text: "GAME  /  " + (root.selectedGame ? root.selectedGame.genre.toUpperCase() : ""); color: zamanTheme.accent; font.pixelSize: px(15); font.letterSpacing: 1.5; font.weight: Font.DemiBold }
-                    Text {
+                    GameIdentity {
                         Layout.fillWidth: true
-                        text: root.selectedGame ? root.selectedGame.name : ""
-                        color: zamanTheme.text
-                        font.pixelSize: px(53)
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
+                        Layout.preferredHeight: px(112)
+                        game: root.selectedGame
+                        ink: zamanTheme.text
+                        scaleFactor: root.uiScale
                     }
                     Text {
                         Layout.fillWidth: true
@@ -654,8 +758,10 @@ ApplicationWindow {
                         elide: Text.ElideRight
                         lineHeight: 1.15
                     }
-                    Row {
-                        spacing: px(16)
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: childrenRect.height
+                        spacing: px(10)
                         Rectangle {
                             width: installedLabel.implicitWidth + px(27)
                             height: px(32)
@@ -702,7 +808,23 @@ ApplicationWindow {
                             lineHeight: 1.25
                         }
                     }
+                    TransactionProgress {
+                        objectName: "detailTransactionProgress"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight
+                        visible: store.busy
+                        stacked: true
+                        transaction: store
+                        gameName: root.activeTransactionName
+                        scaleFactor: root.uiScale
+                        accent: zamanTheme.accent
+                        ink: zamanTheme.text
+                        muted: zamanTheme.muted
+                        surface: zamanTheme.elevated
+                        onStopRequested: root.requestCancel()
+                    }
                     RowLayout {
+                        visible: !store.busy
                         Layout.fillWidth: true
                         Layout.fillHeight: false
                         Layout.preferredHeight: px(72)
@@ -718,7 +840,7 @@ ApplicationWindow {
                             border.width: root.detailAction === 0 ? 3 : 0
                             Text {
                                 anchors.centerIn: parent
-                                text: store.busy ? "TRANSACTION IN PROGRESS" : store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
+                                text: store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
                                       : !root.selectedGame ? "SELECT A GAME"
                                       : root.selectedGame.installed ? "PLAY"
                                       : !store.availabilityChecked ? "CHECKING AVAILABILITY"
@@ -741,8 +863,50 @@ ApplicationWindow {
                             MouseArea { anchors.fill: parent; enabled: !store.busy && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 1; root.requestUninstall() } }
                         }
                     }
-                    Text { text: store.busy ? "X  Request stop" : "← / →  Choose action    ·    A  Select    ·    B  Back    ·    ↑ / ↓  Scroll description"; color: zamanTheme.muted; font.pixelSize: px(13) }
+                    Text { text: store.busy ? "X  Request stop" : "← / →  Action   ·   A  Select   ·   B  Back\n↑ / ↓  Scroll   ·   Y  View fullscreen"; color: zamanTheme.muted; font.pixelSize: px(13) }
                 }
+            }
+        }
+    }
+
+    Rectangle {
+        objectName: "fullscreenGallery"
+        anchors.fill: parent
+        z: 25
+        visible: root.galleryFullscreen
+        color: "#080B11"
+        MouseArea { anchors.fill: parent; onClicked: {} }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: px(35)
+            spacing: px(18)
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: root.selectedGame ? root.selectedGame.name : ""; color: zamanTheme.text; font.pixelSize: px(25) }
+                Item { Layout.fillWidth: true }
+                GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale; text: "B  Back to details"; focusPolicy: Qt.NoFocus; onClicked: root.galleryFullscreen = false }
+            }
+            ScreenshotView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                imageUrl: root.galleryImage ? root.galleryImage.fullUrl : ""
+                decodeWidth: 2560
+                decodeHeight: 1440
+                ink: zamanTheme.muted
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale; text: "L1  Previous"; enabled: root.galleryImages.length > 1; focusPolicy: Qt.NoFocus; onClicked: root.moveGallery(-1) }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.galleryImage ? root.galleryImage.caption : ""
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignHCenter
+                    color: zamanTheme.muted
+                    font.pixelSize: px(18)
+                }
+                Text { text: (root.galleryIndex + 1) + " / " + root.galleryImages.length; color: zamanTheme.text; font.pixelSize: px(18) }
+                GalleryButton { ink: zamanTheme.text; surface: zamanTheme.elevated; scaleFactor: root.uiScale; text: "R1  Next"; enabled: root.galleryImages.length > 1; focusPolicy: Qt.NoFocus; onClicked: root.moveGallery(1) }
             }
         }
     }
