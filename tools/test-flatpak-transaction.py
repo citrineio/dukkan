@@ -17,6 +17,30 @@ spec.loader.exec_module(transaction)
 
 
 class TransactionTests(unittest.TestCase):
+    def test_terminal_bar_is_not_embedded_in_stage_text(self):
+        rows, pending = transaction.parse_terminal(
+            'Installing 2/4… ███████░░░ 72% 10 MB/s\r'.encode())
+        self.assertEqual(rows, [{'stage': 'Installing 2/4…', 'percent': 72}])
+        self.assertEqual(pending, b'')
+        rows, _ = transaction.parse_terminal(b'Installing [======>   ] 42%\r')
+        self.assertEqual(rows, [{'stage': 'Installing', 'percent': 42}])
+
+    def test_progress_only_rows_preserve_numeric_updates(self):
+        rows, _ = transaction.parse_terminal('████ 57%\r'.encode())
+        self.assertEqual(rows, [{'stage': '', 'percent': 57}])
+        rows, _ = transaction.parse_terminal(b'Installing 33% 2 MB/s\r')
+        self.assertEqual(rows, [{'stage': 'Installing', 'percent': 33}])
+
+    def test_split_utf8_bar_and_osc_still_report_real_percent(self):
+        raw = 'Installing… ███ 81%\r'.encode()
+        split = raw.index('█'.encode()) + 1
+        rows, pending = transaction.parse_terminal(raw[:split])
+        self.assertEqual(rows, [])
+        rows, pending = transaction.parse_terminal(raw[split:] + b'\x1b]9;4;1;82\x07', pending)
+        self.assertEqual(rows, [{'stage': 'Installing…', 'percent': 81},
+                                {'stage': '', 'percent': 82}])
+        self.assertEqual(pending, b'')
+
     def test_split_osc_progress_and_step_reset(self):
         rows, pending = transaction.parse_terminal(b'Installing runtime\r\x1b]9;4;1;')
         self.assertEqual(rows, [{'stage': 'Installing runtime', 'percent': None}])

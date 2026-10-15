@@ -30,6 +30,8 @@ qt_add_resources(dukkan "dukkan_assets"
         qml/GameIdentity.qml
         qml/ScreenshotView.qml
         qml/GalleryButton.qml
+        qml/ProgressTrack.qml
+        qml/TransactionProgress.qml
         data/games.json
         tools/flatpak-transaction.py
 )

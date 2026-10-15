@@ -77,6 +77,12 @@ ApplicationWindow {
     }
     property var selectedGame: visibleGames.length > 0
         ? visibleGames[Math.max(0, Math.min(selectedIndex, visibleGames.length - 1))] : null
+    readonly property string activeTransactionName: {
+        var games = store.games
+        for (var i = 0; i < games.length; ++i)
+            if (games[i].id === store.activeGame) return games[i].name
+        return "Game"
+    }
     property string modalTitle: modal === "install" ? "Install this game?"
         : modal === "remove" ? "Uninstall this game?" : "Stop this download?"
     property string modalMessage: modal === "install"
@@ -563,63 +569,20 @@ ApplicationWindow {
             }
         }
 
-        // Transaction information is elevated into a persistent readable strip.
-        Rectangle {
+        // Each page owns one progress surface; details has its own inline view.
+        TransactionProgress {
+            objectName: "homeTransactionProgress"
             Layout.fillWidth: true
-            Layout.preferredHeight: store.busy ? px(56) : 0
-            visible: store.busy
-            color: zamanTheme.elevated
-            radius: px(12)
-            border.color: "#4B5765"
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: px(18)
-                anchors.rightMargin: px(18)
-                spacing: px(16)
-                Text { text: store.operation === "install" ? "INSTALLING" : "UNINSTALLING"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.Bold; font.letterSpacing: 1.2 }
-                Text { text: store.progressStage || store.activity; color: zamanTheme.text; font.pixelSize: px(14); Layout.preferredWidth: px(300); elide: Text.ElideRight }
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: px(8)
-                    color: "#343E4D"
-                    radius: px(4)
-                    clip: true
-                    Rectangle {
-                        visible: store.progressPercent >= 0
-                        width: parent.width * Math.max(0, Math.min(100, store.progressPercent)) / 100
-                        height: parent.height
-                        radius: px(4)
-                        color: zamanTheme.accent
-                        Behavior on width { NumberAnimation { duration: 180 } }
-                    }
-                    Rectangle {
-                        id: movingProgress
-                        visible: store.progressPercent < 0
-                        height: parent.height
-                        width: Math.max(px(80), parent.width * .28)
-                        radius: px(4)
-                        color: zamanTheme.accent
-                        NumberAnimation {
-                            target: movingProgress
-                            property: "x"
-                            from: -movingProgress.width
-                            to: movingProgress.parent ? movingProgress.parent.width : 800
-                            duration: 1350
-                            loops: Animation.Infinite
-                            running: store.busy && store.progressPercent < 0
-                        }
-                    }
-                }
-                Text { text: store.progressPercent < 0 ? "WORKING" : store.progressPercent + "% · CURRENT STEP"; color: zamanTheme.accent; font.pixelSize: px(13); font.weight: Font.DemiBold }
-                Rectangle {
-                    Layout.preferredWidth: px(115)
-                    Layout.preferredHeight: px(35)
-                    radius: px(8)
-                    color: "#35404E"
-                    Text { anchors.centerIn: parent; text: "X  Stop"; color: zamanTheme.text; font.pixelSize: px(13) }
-                    MouseArea { anchors.fill: parent; onClicked: root.requestCancel() }
-                }
-            }
+            Layout.preferredHeight: visible ? implicitHeight : 0
+            visible: store.busy && !root.detailsOpen
+            transaction: store
+            gameName: root.activeTransactionName
+            scaleFactor: root.uiScale
+            accent: zamanTheme.accent
+            ink: zamanTheme.text
+            muted: zamanTheme.muted
+            surface: zamanTheme.elevated
+            onStopRequested: root.requestCancel()
         }
 
         RowLayout {
@@ -824,7 +787,23 @@ ApplicationWindow {
                             lineHeight: 1.25
                         }
                     }
+                    TransactionProgress {
+                        objectName: "detailTransactionProgress"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight
+                        visible: store.busy
+                        stacked: true
+                        transaction: store
+                        gameName: root.activeTransactionName
+                        scaleFactor: root.uiScale
+                        accent: zamanTheme.accent
+                        ink: zamanTheme.text
+                        muted: zamanTheme.muted
+                        surface: zamanTheme.elevated
+                        onStopRequested: root.requestCancel()
+                    }
                     RowLayout {
+                        visible: !store.busy
                         Layout.fillWidth: true
                         Layout.fillHeight: false
                         Layout.preferredHeight: px(72)
@@ -840,7 +819,7 @@ ApplicationWindow {
                             border.width: root.detailAction === 0 ? 3 : 0
                             Text {
                                 anchors.centerIn: parent
-                                text: store.busy ? "TRANSACTION IN PROGRESS" : store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
+                                text: store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
                                       : !root.selectedGame ? "SELECT A GAME"
                                       : root.selectedGame.installed ? "PLAY"
                                       : !store.availabilityChecked ? "CHECKING AVAILABILITY"

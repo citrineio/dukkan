@@ -18,7 +18,9 @@ jobs:
             qml6-module-qtquick-templates qml6-module-qtquick-layouts qml6-module-qtqml-workerscript \
             qml6-module-qtqml
       - name: Source/contract tests
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 tools/test-flatpak-transaction.py
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
       - name: Compile

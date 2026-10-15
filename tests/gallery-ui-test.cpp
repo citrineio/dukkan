@@ -3,6 +3,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QQuickStyle>
 #include <QImage>
 #include <QEventLoop>
@@ -35,6 +36,16 @@ static void action(QObject *window, const char *name)
           "dispatch QML action");
     pump();
 }
+static QQuickItem *visibleTrack(QObject *window)
+{
+    QQuickItem *found = nullptr;
+    for (auto *track : window->findChildren<QQuickItem *>("transactionProgressTrack")) {
+        if (!track->isVisible()) continue;
+        check(!found, "only one progress track is visible on the current page");
+        found = track;
+    }
+    return found;
+}
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
@@ -62,12 +73,13 @@ QtObject {
     property var tokens: ({})
     property int launches: 0
     property int removals: 0
+    property int cancellations: 0
     signal action(string name)
     function playGame(id) { launches++ }
     function removeGame(id) { removals++ }
     function installGame(id) {}
     function refresh() {}
-    function cancelTransaction() {}
+    function cancelTransaction() { cancellations++ }
 })QML", QUrl());
     QObject *mock = mocks.create();
     check(mock, "mock QML compiles"); mock->setParent(&engine);
@@ -116,6 +128,42 @@ QtObject {
     if (!captures.isEmpty()) check(window->grabWindow().save(captures + "/details-720p.png"), "capture 720p");
     action(window, "back");
     check(!window->property("detailsOpen").toBool(), "second B returns to catalog");
+
+    // Real QObject notifications must drive the same numeric progress in each
+    // page. No Flatpak process or transaction is started by this test.
+    mock->setProperty("activeGame", "test.game.Game");
+    mock->setProperty("operation", "install");
+    mock->setProperty("progressStage", "Installing 2/4…");
+    mock->setProperty("progressPercent", 37);
+    mock->setProperty("busy", true);
+    pump();
+    auto *track = visibleTrack(window);
+    check(track && track->property("percent").toInt() == 37, "home reports live percent");
+    auto *homeTrack = track;
+    check(QMetaObject::invokeMethod(window, "openDetails"), "open details during transaction");
+    pump();
+    track = visibleTrack(window);
+    check(track && track->property("percent").toInt() == 37, "details inherits current percent");
+    check(track != homeTrack, "detail surface replaces the hidden home progress surface");
+    mock->setProperty("progressPercent", 72); pump();
+    check(track->property("percent").toInt() == 72, "detail percent updates without reopening");
+    if (!captures.isEmpty()) check(window->grabWindow().save(captures + "/detail-progress.png"), "capture detail progress");
+    mock->setProperty("progressPercent", -1); pump();
+    check(track->property("percent").toInt() == -1, "unknown percent remains indeterminate");
+    QObject *detailProgress = window->findChild<QObject *>("detailTransactionProgress");
+    check(detailProgress && QMetaObject::invokeMethod(detailProgress, "stopRequested"), "Stop is reachable");
+    pump();
+    check(window->property("modal").toString() == "cancel", "Stop opens existing confirmation");
+    check(mock->property("cancellations").toInt() == 0, "Stop does not cancel before confirmation");
+    action(window, "back");
+    check(mock->property("busy").toBool(), "B leaves transaction running");
+    mock->setProperty("progressPercent", 72);
+    action(window, "back");
+    track = visibleTrack(window);
+    check(track && track->property("percent").toInt() == 72, "home retains progress after leaving details");
+    if (!captures.isEmpty()) check(window->grabWindow().save(captures + "/home-progress.png"), "capture home progress");
+    mock->setProperty("busy", false); pump();
+    check(!visibleTrack(window), "finished transactions hide progress");
     check(!qmlError, "no QML reference, type, layout, or binding errors");
-    std::puts("PASS: full QML loads, gallery navigation and fullscreen input isolation.");
+    std::puts("PASS: full QML, gallery, single live progress surface, and Stop confirmation.");
 }

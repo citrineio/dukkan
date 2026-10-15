@@ -18,11 +18,32 @@ APPS = {'org.supertuxproject.SuperTux', 'net.supertuxkart.SuperTuxKart',
 OSC = re.compile(rb'\x1b\]9;4;([01])(?:;([0-9]{1,3}))?(?:\x1b\\|\x07)')
 ANSI = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]')
 PERCENT = re.compile(rb'(?<!\d)([0-9]{1,3})\s*%')
+TEXT_PERCENT = re.compile(r'(?<!\d)[0-9]{1,3}\s*%')
+TEXT_BAR = re.compile(r'[\u2580-\u259f\u2800-\u28ff]|\[[#=\-> .]{3,}\]')
 PR_SET_PDEATHSIG = 1
 
 
 def emit(**fields):
     print(json.dumps(fields, ensure_ascii=False), flush=True)
+
+
+def terminal_row(raw):
+    """Keep phase text and numeric progress separate from terminal graphics.
+
+    Flatpak can print a Unicode bar, percent and transfer stats in the same
+    row. The QML progress track is the only bar we display.
+    """
+    clean = ANSI.sub(b'', raw)
+    text = clean.decode('utf-8', 'replace').strip()
+    match = PERCENT.search(clean)
+    value = int(match.group(1)) if match else None
+    percent = value if value is not None and value <= 100 else None
+    bar, number = TEXT_BAR.search(text), TEXT_PERCENT.search(text)
+    cutoff = min((match.start() for match in (bar, number) if match), default=len(text))
+    stage = ''.join(character for character in text[:cutoff]
+                    if character.isprintable() or character == '\t').strip()
+    stage = ' '.join(stage.split())[:180]
+    return {'stage': stage, 'percent': percent} if stage or percent is not None else None
 
 
 def parse_terminal(data, pending=b''):
@@ -34,19 +55,17 @@ def parse_terminal(data, pending=b''):
         newline = min((n for n in (pending.find(b'\r'), pending.find(b'\n')) if n >= 0), default=-1)
         if osc and (newline < 0 or osc.start() <= newline):
             if osc.start():
-                label = ANSI.sub(b'', pending[:osc.start()]).decode('utf-8', 'replace').strip()
-                if label:
-                    rows.append({'stage': label[:180], 'percent': None})
+                row = terminal_row(pending[:osc.start()])
+                if row:
+                    rows.append(row)
             value = int(osc.group(2)) if osc.group(1) == b'1' and osc.group(2) else None
             rows.append({'stage': '', 'percent': value if value is not None and value <= 100 else None})
             pending = pending[osc.end():]
         elif newline >= 0:
             raw, pending = pending[:newline], pending[newline + 1:]
-            label = ANSI.sub(b'', raw).decode('utf-8', 'replace').strip()
-            if label:
-                match = PERCENT.search(raw)
-                value = int(match.group(1)) if match else None
-                rows.append({'stage': label[:180], 'percent': value if value is not None and value <= 100 else None})
+            row = terminal_row(raw)
+            if row:
+                rows.append(row)
         else:
             break
     if len(pending) > 8192:
