@@ -4,7 +4,10 @@ See [Zaman managed storefront integration](docs/SESSION-INTEGRATION.md) for the 
 
 **Dukkan** is an experimental, controller-first game storefront built for **Zaman OS**. It is a standalone **Qt 6 / Qt Quick (QML)** application that discovers a small curated selection of native Linux games from **Flathub** and installs them using the local **Flatpak CLI**.
 
-> **Status: early prototype (v0.3.1).** This is source code for testing and development, **not** a production-ready game store. Fullscreen session integration, stable controller handling, general Flathub search, background transactions, and game launching through Zaman OS are not finished.
+> **Status: early prototype (v0.3.2).** Sprint 3 adds Pegasus library sync
+> requests after verified installs/removals. The paired Zaman theme refreshes
+> Pegasus in place after a changed sync. General Flathub search and
+> background transactions remain future work.
 
 ## Current functionality
 
@@ -13,6 +16,8 @@ See [Zaman managed storefront integration](docs/SESSION-INTEGRATION.md) for the 
 - Locally installed games recognized through Flatpak.
 - AArch64 remote availability checked before installations.
 - Flatpak installation and removal **with explicit confirmation**.
+- Installed-game Play through `zaman-sessiond`, and a Pegasus Native Games sync
+  request after a verified install or uninstall.
 - Controller navigation via SDL2 when enabled, plus keyboard input and an on-screen search keyboard.
 - Dark appearance based on Zaman's graphite, warm-gold, and muted-blue theme. Reads `~/.config/zaman/appearance.json` if present; does not modify it.
 

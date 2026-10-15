@@ -45,10 +45,11 @@ class PrototypeContractTests(unittest.TestCase):
         self.assertIn("store.installGame(pendingId)", self.qml)
         self.assertIn("store.removeGame(pendingId)", self.qml)
 
-    def test_no_pegasus_or_system_modification_from_app(self):
+    def test_library_sync_is_delegated_without_system_modification(self):
         self.assertNotIn("sudo ", self.backend)
         self.assertNotIn("systemctl", self.backend)
-        self.assertNotIn("pegasus", self.backend.lower())
+        self.assertNotIn("metadata.pegasus.txt", self.backend)
+        self.assertIn('QStringLiteral("library"), QStringLiteral("sync")', self.backend)
 
     def test_qml_resources_in_build_manifest(self):
         cmake = (ROOT / "CMakeLists.txt").read_text()
