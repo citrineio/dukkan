@@ -16,6 +16,7 @@ class StoreBackend : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList games READ games NOTIFY gamesChanged)
+    Q_PROPERTY(QString catalogError READ catalogError NOTIFY gamesChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY transactionChanged)
     Q_PROPERTY(QString activeGame READ activeGame NOTIFY transactionChanged)
     Q_PROPERTY(QString operation READ operation NOTIFY transactionChanged)
@@ -31,6 +32,7 @@ public:
     explicit StoreBackend(QObject *parent = nullptr);
     ~StoreBackend() override;
     QVariantList games() const;
+    QString catalogError() const { return m_catalogError; }
     bool busy() const { return m_busy; }
     QString activeGame() const { return m_activeGame; }
     QString operation() const { return m_operation; }
@@ -64,6 +66,7 @@ private:
         QString summary;
         QString description;
         QString tag;
+        QString packageLogo;
         QString icon;
         QString screenshot;
         QVariantList screenshots;
@@ -73,7 +76,8 @@ private:
         bool available = false;
     };
 
-    void loadSeeds();
+    bool loadCatalog();
+    bool authorize(const QString &id);
     void loadCache();
     void saveCache();
     void loadMetadata();
@@ -105,6 +109,8 @@ private:
     QByteArray m_progressBuffer;
     bool m_availabilityChecked = false;
     bool m_refreshFromTransaction = false;
+    QString m_catalogError;
+    int m_catalogGeneration = 0;
     int m_listingGeneration = 0;
     int m_librarySyncGeneration = 0;
 };

@@ -60,6 +60,7 @@ int main(int argc, char **argv)
     mocks.setData(R"QML(import QtQml
 QtObject {
     property var games: []
+    property string catalogError: ""
     property bool busy: false
     property bool launchBusy: false
     property bool removalCheck: false

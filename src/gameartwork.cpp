@@ -74,21 +74,14 @@ QVariantList GameArtwork::screenshots(const QJsonObject &metadata)
     return result;
 }
 
-QString GameArtwork::localLogo(const QString &appId)
+QString GameArtwork::localLogo(const QString &appId, const QString &packageLogo)
 {
     const QString override = readableImage(dataRoot() + QStringLiteral("/zaman/game-artwork/")
                                             + appId + QStringLiteral("/logo.png"));
     if (!override.isEmpty()) return override;
-    QString relative;
-    if (appId == QStringLiteral("org.supertuxproject.SuperTux"))
-        relative = QStringLiteral("share/supertux2/images/engine/menu/logo.png");
-    else if (appId == QStringLiteral("net.supertuxkart.SuperTuxKart"))
-        relative = QStringLiteral("share/supertuxkart/data/gui/icons/logo_slim.png");
-    else if (appId == QStringLiteral("org.wesnoth.Wesnoth"))
-        relative = QStringLiteral("share/wesnoth/images/misc/logo.png");
-    if (relative.isEmpty()) return {};
+    if (packageLogo.isEmpty()) return {};
     return readableImage(dataRoot() + QStringLiteral("/flatpak/app/") + appId
-        + QStringLiteral("/aarch64/stable/active/files/") + relative);
+        + QStringLiteral("/aarch64/stable/active/files/") + packageLogo);
 }
 
 QString GameArtwork::localIcon(const QString &appId)

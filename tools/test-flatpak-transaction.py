@@ -60,6 +60,7 @@ class TransactionTests(unittest.TestCase):
             return original_popen([sys.executable, '-c', code], **kwargs)
 
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'XDG_RUNTIME_DIR': root}), \
+                patch.object(transaction, 'authorize'), \
                 patch.object(transaction.subprocess, 'Popen', side_effect=fake_popen), \
                 patch.object(transaction.subprocess, 'run') as verify:
             verify.return_value.returncode = 0

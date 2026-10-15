@@ -9,6 +9,8 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Network)
 
 qt_add_executable(dukkan
     src/main.cpp
+    src/gamecatalog.cpp
+    src/gamecatalog.h
     src/storebackend.cpp
     src/storebackend.h
     src/gameartwork.cpp
@@ -32,7 +34,6 @@ qt_add_resources(dukkan "dukkan_assets"
         qml/GalleryButton.qml
         qml/ProgressTrack.qml
         qml/TransactionProgress.qml
-        data/games.json
         tools/flatpak-transaction.py
 )
 
@@ -59,6 +60,15 @@ install(TARGETS dukkan RUNTIME DESTINATION bin)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(catalog-backend-test tests/catalog-backend-test.cpp src/storebackend.cpp src/gamecatalog.cpp src/gameartwork.cpp)
+    target_include_directories(catalog-backend-test PRIVATE src)
+    target_link_libraries(catalog-backend-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+    add_test(NAME catalog-backend COMMAND catalog-backend-test)
+    set_tests_properties(catalog-backend PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(gamecatalog-test tests/gamecatalog-test.cpp src/gamecatalog.cpp)
+    target_include_directories(gamecatalog-test PRIVATE src)
+    target_link_libraries(gamecatalog-test PRIVATE Qt6::Core)
+    add_test(NAME shared-catalog COMMAND gamecatalog-test)
     add_executable(gameartwork-test tests/gameartwork-test.cpp src/gameartwork.cpp)
     target_include_directories(gameartwork-test PRIVATE src)
     target_link_libraries(gameartwork-test PRIVATE Qt6::Core Qt6::Gui)

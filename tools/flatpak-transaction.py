@@ -13,8 +13,16 @@ import subprocess
 import sys
 import time
 
-APPS = {'org.supertuxproject.SuperTux', 'net.supertuxkart.SuperTuxKart',
-        'org.wesnoth.Wesnoth', 'org.openttd.OpenTTD', 'org.opensurge2d.OpenSurge'}
+def authorize(app):
+    # Dukkan extracts this relay into /tmp; the shared reader is installed here.
+    module_dir = os.environ.get('ZAMAN_CATALOG_LIBEXEC', '/usr/local/libexec/zaman')
+    if not os.path.isabs(module_dir):
+        raise ValueError('ZAMAN_CATALOG_LIBEXEC must be absolute')
+    sys.path.insert(0, module_dir)
+    from zaman_catalog import require_enabled
+    require_enabled(app)
+
+
 OSC = re.compile(rb'\x1b\]9;4;([01])(?:;([0-9]{1,3}))?(?:\x1b\\|\x07)')
 ANSI = re.compile(rb'\x1b\[[0-9;?]*[ -/]*[@-~]')
 PERCENT = re.compile(rb'(?<!\d)([0-9]{1,3})\s*%')
@@ -82,8 +90,7 @@ def child_setup():
 
 
 def run(operation, app):
-    if app not in APPS:
-        raise ValueError('Application is outside the curated catalog')
+    authorize(app)
     runtime = os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')
     root = os.path.join(runtime, 'zaman-installed-game')
     os.makedirs(root, mode=0o700, exist_ok=True)

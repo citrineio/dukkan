@@ -1,5 +1,7 @@
 #include "storebackend.h"
 #include "gameartwork.h"
+#include "gamecatalog.h"
+#include <QDebug>
 
 #include <QFile>
 #include <QFileInfo>
@@ -26,9 +28,6 @@ QString cachePath()
 
 StoreBackend::StoreBackend(QObject *parent) : QObject(parent)
 {
-    loadSeeds();
-    loadCache();
-    loadMetadata();
     refresh();
 }
 
@@ -49,25 +48,50 @@ StoreBackend::~StoreBackend()
         }
     }
 }
-void StoreBackend::loadSeeds()
+bool StoreBackend::loadCatalog()
 {
-    QFile f(QStringLiteral(":/data/games.json"));
-    if (!f.open(QIODevice::ReadOnly)) {
-        setActivity(QStringLiteral("Catalog resource missing"));
-        return;
+    QVector<GameCatalog::Entry> entries;
+    QString error;
+    ++m_catalogGeneration;
+    if (!GameCatalog::load(entries, error)) {
+        qWarning().noquote() << error;
+        m_catalogError = QStringLiteral("Game list unavailable. Press X to retry.");
+        m_availabilityChecked = false;
+        emit gamesChanged();
+        return false;
     }
-    const auto doc = QJsonDocument::fromJson(f.readAll());
-    for (const auto &item : doc.array()) {
-        const auto obj = item.toObject();
+    QVector<Game> games;
+    for (const auto &entry : entries) {
+        if (!entry.enabled) continue;
         Game game;
-        game.id = obj.value(QStringLiteral("id")).toString();
-        game.name = obj.value(QStringLiteral("name")).toString();
-        game.genre = obj.value(QStringLiteral("genre")).toString();
-        game.summary = obj.value(QStringLiteral("summary")).toString();
-        game.description = game.summary;
-        game.tag = obj.value(QStringLiteral("tag")).toString();
-        if (!game.id.isEmpty()) m_games.append(game);
+        if (const auto *old = findGame(entry.id)) game = *old;
+        game.id = entry.id; game.name = entry.name; game.genre = entry.genre;
+        game.summary = entry.summary; game.description = entry.summary;
+        game.tag = entry.tag; game.packageLogo = entry.packageLogo;
+        game.available = false;
+        games.append(game);
     }
+    m_games = games;
+    m_catalogError.clear();
+    m_availabilityChecked = false;
+    loadCache();
+    loadMetadata();
+    emit gamesChanged();
+    return true;
+}
+
+bool StoreBackend::authorize(const QString &id)
+{
+    QVector<GameCatalog::Entry> entries;
+    QString error;
+    if (GameCatalog::load(entries, error)) {
+        for (const auto &entry : entries) if (entry.id == id && entry.enabled) return true;
+        error = QStringLiteral("Game is no longer enabled in the catalog");
+    }
+    qWarning().noquote() << error;
+    m_catalogError = QStringLiteral("Game list changed or is unavailable. Press X to refresh.");
+    emit gamesChanged();
+    return false;
 }
 
 QVariantList StoreBackend::games() const
@@ -83,7 +107,7 @@ QVariantList StoreBackend::games() const
         obj[QStringLiteral("tag")] = g.tag;
         const QString localIcon = GameArtwork::localIcon(g.id);
         obj[QStringLiteral("icon")] = localIcon.isEmpty() ? g.icon : localIcon;
-        obj[QStringLiteral("logo")] = GameArtwork::localLogo(g.id);
+        obj[QStringLiteral("logo")] = GameArtwork::localLogo(g.id, g.packageLogo);
         obj[QStringLiteral("screenshot")] = g.screenshot;
         obj[QStringLiteral("screenshots")] = g.screenshots;
         obj[QStringLiteral("downloadSize")] = g.downloadSize;
@@ -157,8 +181,9 @@ void StoreBackend::loadMetadata()
         req.setTransferTimeout(12000);
         QNetworkReply *reply = m_network.get(req);
         const QString id = game.id;
-        connect(reply, &QNetworkReply::finished, this, [this, reply, id]() {
-            if (reply->error() == QNetworkReply::NoError
+        const int generation = m_catalogGeneration;
+        connect(reply, &QNetworkReply::finished, this, [this, reply, id, generation]() {
+            if (generation == m_catalogGeneration && reply->error() == QNetworkReply::NoError
                 && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200) {
                 const QByteArray bytes = reply->readAll();
                 if (bytes.size() <= 1048576) {
@@ -191,8 +216,9 @@ void StoreBackend::setActivity(const QString &message)
 
 void StoreBackend::refresh()
 {
-    const int gen = ++m_listingGeneration;
-    Q_UNUSED(gen);
+    if (m_busy || m_launchBusy || m_removalCheck) return;
+    ++m_listingGeneration;
+    if (!loadCatalog()) return;
     const bool preserveActivity = m_refreshFromTransaction;
     m_refreshFromTransaction = false;
     if (!preserveActivity)
@@ -268,13 +294,14 @@ void StoreBackend::installGame(const QString &id)
 {
     Game *g = findGame(id);
     if (!g || !g->available || !m_availabilityChecked || g->installed || m_busy) return;
-    startTransaction(id, true);
+    if (authorize(id)) startTransaction(id, true);
 }
 
 void StoreBackend::removeGame(const QString &id)
 {
     Game *g = findGame(id);
     if (!g || !g->installed || m_busy || m_launchBusy || m_removalCheck) return;
+    if (!authorize(id)) return;
     m_removalCheck = true;
     emit launchChanged();
     setActivity(QStringLiteral("Checking that the game has stopped…"));
@@ -312,6 +339,7 @@ void StoreBackend::playGame(const QString &id)
 {
     Game *game = findGame(id);
     if (!game || !game->installed || m_busy || m_launchBusy || m_removalCheck) return;
+    if (!authorize(id)) return;
     m_launchBusy = true;
     emit launchChanged();
     setActivity(QStringLiteral("Starting ") + game->name + QStringLiteral("…"));
@@ -343,7 +371,7 @@ void StoreBackend::playGame(const QString &id)
 
 void StoreBackend::startTransaction(const QString &id, bool install)
 {
-    if (m_busy || m_launchBusy || m_removalCheck) return;
+    if (m_busy || m_launchBusy || m_removalCheck || !authorize(id)) return;
     m_busy = true;
     m_activeGame = id;
     m_operation = install ? QStringLiteral("install") : QStringLiteral("remove");

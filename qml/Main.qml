@@ -144,7 +144,7 @@ ApplicationWindow {
         descriptionFlick.contentY = 0
     }
     function requestGameAction() {
-        if (!selectedGame || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
         if (selectedGame.installed) { store.playGame(selectedGame.id); return }
         if (!selectedGame.installed && (!store.availabilityChecked || !selectedGame.available)) return
         pendingId = selectedGame.id
@@ -154,7 +154,7 @@ ApplicationWindow {
         focusArea = "dialog"
     }
     function requestUninstall() {
-        if (!selectedGame || !selectedGame.installed || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || !selectedGame.installed || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
         pendingId = selectedGame.id
         pendingName = selectedGame.name
         modal = "remove"
@@ -595,6 +595,27 @@ ApplicationWindow {
             ControlHint { button: "B"; label: "Back / exit"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "Y"; label: "Library"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "START"; label: "Search"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
+        }
+    }
+
+    Rectangle {
+        z: 35
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: px(8)
+        width: Math.min(parent.width - px(60), catalogMessage.implicitWidth + px(32))
+        height: catalogMessage.implicitHeight + px(18)
+        radius: px(6)
+        color: zamanTheme.elevated
+        visible: store.catalogError.length > 0
+        Text {
+            id: catalogMessage
+            anchors.centerIn: parent
+            width: parent.width - px(32)
+            text: store.catalogError
+            color: zamanTheme.accent
+            font.pixelSize: px(18)
+            wrapMode: Text.WordWrap
         }
     }
 
