@@ -66,6 +66,7 @@ private:
         QString tag;
         QString icon;
         QString screenshot;
+        QVariantList screenshots;
         QString downloadSize;
         QString metadataSource = QStringLiteral("seed");
         bool installed = false;

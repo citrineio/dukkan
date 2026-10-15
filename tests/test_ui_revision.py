@@ -16,7 +16,8 @@ class UiRevisionTests(unittest.TestCase):
         self.assertIn('showingScreenshot ? Math.max(0, parent.width - 12)', ART)
         self.assertIn('Math.min(parent.width * 0.50, 210)', ART)
         self.assertIn('screenshotUrl: tile.game.screenshot', TILE)
-        self.assertIn('"1248x702", "752x423", "624x351"', STORE)
+        artwork = (ROOT / 'src/gameartwork.cpp').read_text()
+        self.assertIn('"1248x702", "752x423", "624x351"', artwork)
 
     def test_new_console_information_hierarchy(self):
         for term in ('FEATURED  /  DISCOVER','Made to play','NAV', 'onActivated:',

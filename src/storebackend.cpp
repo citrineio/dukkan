@@ -1,4 +1,5 @@
 #include "storebackend.h"
+#include "gameartwork.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -21,30 +22,6 @@ QString cachePath()
            + QStringLiteral("/flathub-catalog.json");
 }
 
-QString safeAssetUrl(const QString &candidate)
-{
-    const QUrl url(candidate);
-    if (url.scheme() != QStringLiteral("https"))
-        return {};
-    // Only use the Flathub CDN or known Flathub website for UI artwork.
-    const QString host = url.host().toLower();
-    if (host == QStringLiteral("dl.flathub.org") || host == QStringLiteral("flathub.org"))
-        return url.toString();
-    return {};
-}
-
-QString screenshotUrl(const QJsonObject &obj)
-{
-    const QJsonArray shots = obj.value(QStringLiteral("screenshots")).toArray();
-    for (const auto &shot : shots) {
-        const auto item = shot.toObject();
-        for (const auto &key : {"1248x702", "752x423", "624x351", "original", "source"}) {
-            const QString url = safeAssetUrl(item.value(QLatin1String(key)).toString());
-            if (!url.isEmpty()) return url;
-        }
-    }
-    return {};
-}
 }
 
 StoreBackend::StoreBackend(QObject *parent) : QObject(parent)
@@ -104,8 +81,11 @@ QVariantList StoreBackend::games() const
         obj[QStringLiteral("summary")] = g.summary;
         obj[QStringLiteral("description")] = g.description;
         obj[QStringLiteral("tag")] = g.tag;
-        obj[QStringLiteral("icon")] = g.icon;
+        const QString localIcon = GameArtwork::localIcon(g.id);
+        obj[QStringLiteral("icon")] = localIcon.isEmpty() ? g.icon : localIcon;
+        obj[QStringLiteral("logo")] = GameArtwork::localLogo(g.id);
         obj[QStringLiteral("screenshot")] = g.screenshot;
+        obj[QStringLiteral("screenshots")] = g.screenshots;
         obj[QStringLiteral("downloadSize")] = g.downloadSize;
         obj[QStringLiteral("metadataSource")] = g.metadataSource;
         obj[QStringLiteral("installed")] = g.installed;
@@ -163,8 +143,10 @@ void StoreBackend::updateMetadata(Game &game, const QJsonObject &obj)
         game.description = QTextDocumentFragment::fromHtml(description).toPlainText().trimmed();
         game.description = game.description.left(1400);
     }
-    game.icon = safeAssetUrl(obj.value(QStringLiteral("icon")).toString());
-    game.screenshot = screenshotUrl(obj);
+    game.icon = GameArtwork::safeUrl(obj.value(QStringLiteral("icon")).toString());
+    game.screenshots = GameArtwork::screenshots(obj);
+    game.screenshot = game.screenshots.isEmpty() ? QString()
+        : game.screenshots.first().toMap().value(QStringLiteral("url")).toString();
 }
 
 void StoreBackend::loadMetadata()

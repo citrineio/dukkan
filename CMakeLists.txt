@@ -11,6 +11,8 @@ qt_add_executable(dukkan
     src/main.cpp
     src/storebackend.cpp
     src/storebackend.h
+    src/gameartwork.cpp
+    src/gameartwork.h
     src/gamepadbridge.cpp
     src/gamepadbridge.h
     src/appearanceprovider.cpp
@@ -25,6 +27,9 @@ qt_add_resources(dukkan "dukkan_assets"
         qml/GameArt.qml
         qml/GameTile.qml
         qml/ControlHint.qml
+        qml/GameIdentity.qml
+        qml/ScreenshotView.qml
+        qml/GalleryButton.qml
         data/games.json
         tools/flatpak-transaction.py
 )
@@ -49,3 +54,17 @@ if(DUKKAN_USE_SDL2)
 endif()
 
 install(TARGETS dukkan RUNTIME DESTINATION bin)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(gameartwork-test tests/gameartwork-test.cpp src/gameartwork.cpp)
+    target_include_directories(gameartwork-test PRIVATE src)
+    target_link_libraries(gameartwork-test PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME artwork-metadata COMMAND gameartwork-test)
+
+    add_executable(gallery-ui-test tests/gallery-ui-test.cpp)
+    target_link_libraries(gallery-ui-test PRIVATE Qt6::Quick Qt6::QuickControls2)
+    target_compile_definitions(gallery-ui-test PRIVATE SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME gallery-ui COMMAND gallery-ui-test)
+    set_tests_properties(gallery-ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+endif()
