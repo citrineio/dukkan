@@ -1,0 +1,36 @@
+name: Bring a game to Zaman
+description: Propose a game or discuss native Linux/ARM64 integration with Kawn Electro.
+title: "Game submission: "
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for your interest in Zaman. This is a public issue. For private enquiries, email kadhem.alabdulmuhsin@kawnelectro.com. Please do not attach credentials or confidential builds."
+  - type: input
+    id: game
+    attributes:
+      label: Game name and project/store link
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Public contact or website
+      description: Optional; use email for private contact details.
+  - type: textarea
+    id: platforms
+    attributes:
+      label: Linux and ARM64 availability
+      description: Include existing native builds, Flatpak/Flathub app ID, and known requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: Controller support and gameplay requirements
+  - type: textarea
+    id: rights
+    attributes:
+      label: Your relationship to the game and distribution rights
+      description: State whether you are the developer/publisher and the applicable license. Commercial terms can be discussed privately.
+    validations:
+      required: true

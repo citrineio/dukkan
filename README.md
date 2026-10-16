@@ -1,118 +1,116 @@
 # Dukkan
 
-See [Zaman managed storefront integration](docs/SESSION-INTEGRATION.md) for the paired source branches and device acceptance.
+A controller-operated native Linux game storefront for the
+[Zaman retro console](https://zaman.kawnelectro.com/), by
+[Kawn Electro](https://kawnelectro.com/).
 
-**Dukkan** is an experimental, controller-first game storefront built for **Zaman OS**. It is a standalone **Qt 6 / Qt Quick (QML)** application that discovers a small curated selection of native Linux games from **Flathub** and installs them using the local **Flatpak CLI**.
+Dukkan lets players discover, install, launch and remove a curated selection of
+games without leaving the console interface. The current prototype uses Flathub
+and user Flatpak installations, with architecture checks for Zaman's ARM64 system.
 
-> **Status: early prototype (v0.3.2).** Sprint 3 adds Pegasus library sync
-> requests after verified installs/removals. The paired Zaman theme refreshes
-> Pegasus in place after a changed sync. General Flathub search and
-> background transactions remain future work.
+**Status:** early prototype, version 0.3.2. The repository contains the current
+Sprint 4 source. It is not a payment platform or an unrestricted Flathub browser.
 
-## Current functionality
+## Current features
 
-- Discover and Library views; shared curated JSON catalog (`/usr/local/share/zaman/catalog.json`, supplied by zaman-sessiond).
-- Game descriptions and artwork retrieved from Flathub, with a local metadata cache and fallback descriptions.
-- Locally installed games recognized through Flatpak.
-- AArch64 remote availability checked before installations.
-- Flatpak installation and removal **with explicit confirmation**.
-- Installed-game Play through `zaman-sessiond`, and a Pegasus Native Games sync
-  request after a verified install or uninstall.
-- Controller navigation via SDL2 when enabled, plus keyboard input and an on-screen search keyboard.
-- Dark appearance based on Zaman's graphite, warm-gold, and muted-blue theme. Reads `~/.config/zaman/appearance.json` if present; does not modify it.
+- Discover and Library views, with search across the curated catalog.
+- Game descriptions, local title artwork, screenshots and a full-screen gallery.
+- Installation/removal confirmations, live transaction progress and cancellation.
+- Installed-game launch through Zaman Sessiond.
+- Pegasus Native Games synchronization after a verified install or removal.
+- Terminal transaction notifications through Zaman Notifications.
+- Controller and keyboard navigation, with an on-screen search keyboard.
+- A shared JSON catalog and read-only Zaman appearance settings.
 
-Only applications included in the curated catalog can be installed using this prototype. The search feature filters the curated catalog; it is **not** a full Flathub search engine.
+Install success requires a verified terminal result. Closing Dukkan does not turn
+its current transaction into an independent background download service. General
+Flathub search, payments and publisher self-service uploads are not implemented.
 
-## Dependencies
+## Bring your game to Zaman
 
-- CMake 3.21 or newer and a C++17 compiler
-- Qt 6.4+ with **Core**, **Gui**, **Quick**, **QuickControls2**, and **Network** development components
-- `flatpak` CLI and a Flathub remote (for installation and live catalog checks)
-- Optional: SDL2 development headers/libraries (native gamepad input)
-- A running Wayland session (tested manually with Sway on Zaman; other environments are not guaranteed)
+We welcome developers and publishers interested in making their games available
+on the Zaman retro console.
 
-On Debian 13, you can inspect the install impact first:
+Contact **Kadhem at [kadhem.alabdulmuhsin@kawnelectro.com](mailto:kadhem.alabdulmuhsin@kawnelectro.com)**,
+or [open a game-submission issue](https://github.com/citrineio/dukkan/issues/new?template=game-submission.yml).
+Include a game/project link, your contact, Linux/ARM64 availability, controller
+support, distribution rights/license, and an existing Flatpak/Flathub app ID if any.
 
-```bash
-apt-get -s install qt6-base-dev qt6-declarative-dev libsdl2-dev
-```
+The current distribution path is a curated ARM64 Flatpak catalog. Games without
+that package format are still welcome as integration enquiries; submission does
+not promise compatibility, storefront inclusion or a commercial publishing deal.
+Do not post private keys, unpublished builds or confidential agreement details in
+public issues. Email is available for private discussions.
 
-Do not install dependencies if they are already available.
+## Build and run
 
-## Build
+Build requirements are CMake 3.21+, C++17 and Qt 6.4+ with Core, Gui, Quick,
+QuickControls2 and Network. SDL2 is optional for native gamepad input. Runtime
+installation requires Flatpak and a configured Flathub remote. Zaman integration
+requires the matching [session daemon](https://github.com/citrineio/zaman-sessiond).
+No dependency installation is performed by these commands.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j2
 ./build/dukkan
 ```
 
-To disable native SDL2 controller handling:
+Use `-DDUKKAN_USE_SDL2=OFF` when configuring to disable the optional SDL2 bridge.
+Launch within the graphical session so Wayland environment variables are present.
+For managed launch and return to Pegasus, follow
+[session integration](docs/SESSION-INTEGRATION.md).
 
-```bash
-cmake -S . -B build -DDUKKAN_USE_SDL2=OFF
-```
+## Catalog and artwork
 
-Dukkan needs the active desktop session's `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. It is preferable to launch from inside the graphical session; launching over SSH may require importing those variables.
+Dukkan reads `/usr/local/share/zaman/catalog.json`, supplied by zaman-sessiond.
+`ZAMAN_CATALOG_PATH` may select an absolute development file. Only enabled catalog
+IDs are displayed or authorized; invalid catalog data denies new actions.
+Flathub supplies descriptions/screenshots, cached locally for subsequent use.
+Screenshot bytes still need the network or the image cache.
 
-## Controls (prototype)
+Local title-art overrides use
+`$XDG_DATA_HOME/zaman/game-artwork/<app-id>/logo.png`. The default data root is
+`~/.local/share`. See the [gallery notes](docs/SPRINT3.5-GALLERY.md).
+The shared catalog schema and editing commands live in
+[zaman-sessiond/docs/shared-catalog.md](https://github.com/citrineio/zaman-sessiond/blob/main/docs/shared-catalog.md).
 
-| Control | Typical behavior |
-|---|---|
-| D-pad | Navigate selections |
-| A | Open / accept highlighted action |
-| B | Back / cancel; exit from main page |
+## Controls
+
+| Input | Action |
+| --- | --- |
+| D-pad / arrows | Navigate |
+| A / Enter | Select or confirm the highlighted action |
+| B / Escape | Back; leave the catalog from the main page |
 | Start | Search keyboard |
-| X | Refresh / delete character (depending on context) |
-| Y | Switch Discover and Library |
-| Ctrl+Q | Quit from keyboard |
+| X / F5 | Refresh; X deletes a character during text entry |
+| Y | Switch Discover/Library; contextual keyboard/gallery action |
+| Shoulders / Page Up and Page Down | Previous/next screenshot in the gallery |
+| Ctrl+Q | Quit |
 
-A Flatpak install/remove confirmation defaults to the **safe** action. The existing Zaman Guide button is not yet managed by Dukkan.
+The displayed legend describes the current screen. Destructive confirmations
+default to the safe choice. Guide ownership belongs to Zaman's session stack.
 
-## Testing
+## Tests and contributing
 
-```bash
+```sh
 python3 -m unittest discover -s tests -v
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
 ```
 
-These Python tests are predominantly **static source/contract checks**. Passing them is not proof that the QML UI compiles, displays correctly, or works with a controller. Build and perform manual integration testing on a Zaman device.
+Python checks include source contracts; the C++/QML checks require the existing Qt
+build environment. Passing source checks alone does not establish controller or
+console compatibility. Report the app ID, architecture, display/controller setup
+and reproduction steps with a bug report.
 
-## Repository layout
+Technical notes: [architecture](docs/ARCHITECTURE.md),
+[design system](docs/DESIGN-SYSTEM.md), [changes](docs/CHANGELOG.md), and
+[Sprint 4 publication](docs/sprint4-publication.md).
 
-```text
-data/      Example theme (the shared game catalog lives in zaman-sessiond)
-qml/       Qt Quick frontend and reusable components
-src/       Qt/C++ catalog, Flatpak subprocess and input backend
-docs/      Architecture and design notes
-tests/     Static regression checks
-```
+## License
 
-## Development roadmap
-
-1. Integrate Dukkan as a **Storefront** managed by `zaman-sessiond`, alongside Steam; fix fullscreen, focus, Guide ownership and clean return to Pegasus.
-2. Improve display scaling, focus styling, controller-first search, and transaction progress.
-3. Introduce a full catalog with architecture/compatibility filtering and richer Flathub/AppStream metadata.
-4. Move Flatpak transactions into a resilient service with reliable progress, cancellation and notifications.
-5. Connect installed games to the Zaman library and launch path.
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for technical details.
-
-## Scope and licensing
-
-Dukkan is independent of Bazaar and **does not include Bazaar source**. Game titles, screenshots, and descriptions obtained at runtime from Flathub are third-party content subject to their respective licenses and terms. This repository does not bundle the game binaries.
-
-Source code in this repository is offered under the [MIT License](LICENSE), copyright 2026 Kawn Electro. Dependencies retain their own licenses.
-
-## Shared catalog
-
-Dukkan reads `/usr/local/share/zaman/catalog.json` on startup and X/F5 refresh.
-`ZAMAN_CATALOG_PATH` can select an absolute development file. Install the shared
-reader `zaman_catalog.py` alongside sessiond's helpers in `/usr/local/libexec/zaman`
-for transactions; `ZAMAN_CATALOG_LIBEXEC` can select a development helper directory.
-No embedded game list is used. Only enabled IDs are displayed or authorized.
-Flathub still supplies live artwork and descriptions; optional catalog labels are
-offline fallbacks. A malformed/missing catalog displays an error and denies new
-actions. Existing gallery and live-progress behavior is retained.
-
-Build/deployment, schema, editing commands and rollback are documented in
-`zaman-sessiond/docs/shared-catalog.md` in the companion source checkout.
+Dukkan's code is [MIT licensed](LICENSE), copyright 2026 Kawn Electro. Game names,
+screenshots, descriptions and binaries remain subject to their respective owners' rights and
+licenses. This repository does not bundle game binaries or ROMs.

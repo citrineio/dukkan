@@ -16,6 +16,8 @@
 #include <QStandardPaths>
 #include <QTextDocumentFragment>
 #include <QUrl>
+#include <QTimer>
+#include <QUuid>
 
 namespace {
 QString cachePath()
@@ -447,6 +449,27 @@ void StoreBackend::endTransaction(bool success, const QString &details)
     setActivity(success
         ? (op == QStringLiteral("install") ? QStringLiteral("Installed: ") : QStringLiteral("Removed: ")) + id
         : QStringLiteral("Transaction failed: ") + details.left(220));
+    if (!id.isEmpty()) {
+        QString name = id;
+        if (auto game = findGame(id)) name = game->name;
+        const QString helper = qEnvironmentVariable("ZAMAN_NOTIFICATION_CLIENT",
+            QDir::homePath() + QStringLiteral("/.local/libexec/zaman-notifications"));
+        if (QFileInfo::exists(helper)) {
+            QJsonObject event{{QStringLiteral("source"), QStringLiteral("Dukkan")},
+                {QStringLiteral("key"), QStringLiteral("transaction:") + QUuid::createUuid().toString(QUuid::WithoutBraces)},
+                {QStringLiteral("title"), success ? (op == QStringLiteral("install") ? QStringLiteral("Installation complete") : QStringLiteral("Game removed")) : QStringLiteral("Installation or removal stopped")},
+                {QStringLiteral("body"), success ? name : name + QStringLiteral(": ") + details.left(400)},
+                {QStringLiteral("category"), QStringLiteral("install")},
+                {QStringLiteral("state"), success ? QStringLiteral("ready") : QStringLiteral("error")}};
+            auto notification = new QProcess(this);
+            notification->setStandardOutputFile(QProcess::nullDevice());
+            notification->setStandardErrorFile(QProcess::nullDevice());
+            connect(notification, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), notification, &QObject::deleteLater);
+            connect(notification, &QProcess::errorOccurred, notification, &QObject::deleteLater);
+            QTimer::singleShot(2500, notification, [notification]() { notification->kill(); });
+            notification->start(QStringLiteral("/usr/bin/python3"), {helper, QStringLiteral("event"), QStringLiteral("--json"), QString::fromUtf8(QJsonDocument(event).toJson(QJsonDocument::Compact))});
+        }
+    }
     emit transactionFinished(id, op, success);
     m_refreshFromTransaction = true;
     refresh();
