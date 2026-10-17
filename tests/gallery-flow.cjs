@@ -15,6 +15,7 @@ function source(name) {
 let actionCalls = [];
 const ctx = vm.createContext({
   enableGamepadActions:true, keyboardOpen:false, modal:'', modalChoice:0,
+  jobsOpen:false, selectedPending:false, root:null,
   galleryFullscreen:false, galleryIndex:0, galleryImages:[], detailsOpen:true,
   detailAction:1, focusArea:'details', selectedGame:{id:'test', installed:true},
   store:{busy:false}, px:n=>n, descriptionFlick:{contentY:145, contentHeight:900, height:400},
@@ -24,6 +25,7 @@ const ctx = vm.createContext({
   requestCancel:()=>actionCalls.push('cancel'), openKeyboard:()=>actionCalls.push('search'),
   dismissModal:()=>{ctx.modal='';}, executeModalChoice:()=>actionCalls.push('confirm')
 });
+ctx.root=ctx;
 for (const name of ['moveGallery','openGallery','handleAction']) vm.runInContext(source(name), ctx);
 ctx.openGallery();
 assert.equal(ctx.galleryFullscreen,false,'empty gallery cannot open');

@@ -28,6 +28,10 @@ ApplicationWindow {
         readonly property int focusMs: values.focusMs !== undefined ? values.focusMs : 210
     }
 
+    property bool jobsOpen: false
+    property string pendingJobId: ""
+    readonly property var selectedTransaction: { var jobs = store.jobs; return selectedGame ? jobs.find(job => job.app === selectedGame.id && ["queued", "waiting", "running", "cancelling"].indexOf(job.phase) >= 0) || null : null; }
+    readonly property bool selectedPending: { var jobs = store.jobs; return selectedGame ? store.gamePending(selectedGame.id) : false; }
     property string section: "Discover"
     property int selectedIndex: 0
     property int navIndex: 0
@@ -84,16 +88,16 @@ ApplicationWindow {
         return "Game"
     }
     property string modalTitle: modal === "install" ? "Install this game?"
-        : modal === "remove" ? "Uninstall this game?" : "Stop this download?"
+        : modal === "remove" ? "Uninstall this game?" : modal === "retry" ? "Retry this transaction?" : "Stop this download?"
     property string modalMessage: modal === "install"
         ? "Dukkan will install " + pendingName + " from Flathub. "
           + (selectedGame && selectedGame.downloadSize ? "App download: " + selectedGame.downloadSize + ". " : "App download size unavailable. ")
           + "Additional runtimes may require more data."
         : modal === "remove"
         ? "Uninstall " + pendingName + " from this device? Saved application data will be retained."
-        : "Request cancellation of the current Flatpak transaction? It may take a moment."
+        : modal === "retry" ? "A new transaction will verify the current installation before retrying." : "Request cancellation of the selected transaction? It may take a moment."
     property string negativeLabel: modal === "cancel" ? "Keep running" : "Go back"
-    property string positiveLabel: modal === "install" ? "Install game" : modal === "remove" ? "Uninstall game" : "Request stop"
+    property string positiveLabel: modal === "install" ? "Install game" : modal === "remove" ? "Uninstall game" : modal === "retry" ? "Retry" : "Request stop"
 
     onVisibleGamesChanged: {
         if (selectedIndex >= visibleGames.length) selectedIndex = Math.max(0, visibleGames.length - 1)
@@ -121,10 +125,10 @@ ApplicationWindow {
         galleryFullscreen = true
     }
     function leaveStore() {
-        if (store.busy) { requestCancel(); return }
         root.close()
     }
     function changeSection(next) {
+        if (next === "Activity") { jobsOpen = true; return; }
         section = next
         navIndex = next === "Discover" ? 0 : 1
         selectedIndex = 0
@@ -144,7 +148,7 @@ ApplicationWindow {
         descriptionFlick.contentY = 0
     }
     function requestGameAction() {
-        if (!selectedGame || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || store.catalogError || selectedPending || store.requestPending || !store.workerAvailable || store.launchBusy || store.removalCheck) return
         if (selectedGame.installed) { store.playGame(selectedGame.id); return }
         if (!selectedGame.installed && (!store.availabilityChecked || !selectedGame.available)) return
         pendingId = selectedGame.id
@@ -154,15 +158,16 @@ ApplicationWindow {
         focusArea = "dialog"
     }
     function requestUninstall() {
-        if (!selectedGame || !selectedGame.installed || store.catalogError || store.busy || store.launchBusy || store.removalCheck) return
+        if (!selectedGame || !selectedGame.installed || store.catalogError || selectedPending || store.requestPending || !store.workerAvailable || store.launchBusy || store.removalCheck) return
         pendingId = selectedGame.id
         pendingName = selectedGame.name
         modal = "remove"
         modalChoice = 0
         focusArea = "dialog"
     }
-    function requestCancel() {
-        if (!store.busy) return
+    function requestCancel(jobId) {
+        pendingJobId = jobId || store.activeJob
+        if (!pendingJobId) return
         modal = "cancel"
         modalChoice = 0
         focusArea = "dialog"
@@ -176,7 +181,8 @@ ApplicationWindow {
         if (modalChoice === 1) {
             if (modal === "install") store.installGame(pendingId)
             else if (modal === "remove") store.removeGame(pendingId)
-            else if (modal === "cancel") store.cancelTransaction()
+            else if (modal === "cancel") store.cancelJob(pendingJobId)
+            else if (modal === "retry") store.retryJob(pendingJobId)
         }
         dismissModal()
     }
@@ -234,6 +240,7 @@ ApplicationWindow {
             else if (action === "back") dismissModal()
             return
         }
+        if (jobsOpen) { activityPage.input(action); return; }
         // Fullscreen is a separate input surface. Never let A/Y/X/Start reach
         // the store actions underneath it. B restores the exact detail state.
         if (galleryFullscreen) {
@@ -250,7 +257,7 @@ ApplicationWindow {
             openGallery()
             return
         }
-        if (action === "refresh") { if (store.busy) requestCancel(); else store.refresh(); return }
+        if (action === "refresh") { if (root.selectedPending) requestCancel(root.selectedTransaction.id); else if (store.busy) { jobsOpen = true; } else store.refresh(); return }
         if (action === "library") { changeSection(section === "Library" ? "Discover" : "Library"); return }
         if (action === "search") { openKeyboard(); return }
         if (detailsOpen) {
@@ -264,9 +271,9 @@ ApplicationWindow {
         }
         if (focusArea === "nav") {
             if (action === "up") navIndex = Math.max(0, navIndex - 1)
-            else if (action === "down") navIndex = Math.min(1, navIndex + 1)
+            else if (action === "down") navIndex = Math.min(2, navIndex + 1)
             else if (action === "right") focusArea = "catalog"
-            else if (action === "select") changeSection(navIndex === 0 ? "Discover" : "Library")
+            else if (action === "select") changeSection(["Discover", "Library", "Activity"][navIndex])
             else if (action === "back") focusArea = "catalog"
             return
         }
@@ -324,7 +331,7 @@ ApplicationWindow {
             Layout.preferredHeight: px(78)
             spacing: px(20)
             Row {
-                Layout.preferredWidth: px(238)
+                Layout.preferredWidth: px(300)
                 Layout.alignment: Qt.AlignVCenter
                 spacing: px(12)
                 Rectangle { width: px(8); height: px(36); radius: px(4); color: zamanTheme.accent }
@@ -392,7 +399,7 @@ ApplicationWindow {
                     spacing: px(11)
                     Text { text: "EXPLORE"; color: zamanTheme.muted; font.pixelSize: px(12); font.letterSpacing: 2; topPadding: px(15); bottomPadding: px(14) }
                     Repeater {
-                        model: ["Discover", "Library"]
+                        model: ["Discover", "Library", "Activity"]
                         delegate: Rectangle {
                             required property int index
                             required property string modelData
@@ -422,8 +429,7 @@ ApplicationWindow {
                     Text { text: "Native games from Flathub."; width: parent.width; wrapMode: Text.WordWrap; color: zamanTheme.muted; font.pixelSize: px(14); lineHeight: 1.3 }
                     Item { width: 1; height: px(14) }
                     Rectangle { width: parent.width; height: 1; color: "#31404F" }
-                    Text { text: "GAMES"; color: zamanTheme.muted; font.pixelSize: px(12); font.letterSpacing: 1.2; topPadding: px(14) }
-                    Text { text: String(root.visibleGames.length).padStart(2, "0"); color: zamanTheme.accent; font.pixelSize: px(33); font.weight: Font.DemiBold }
+                    Image { source: "../assets/dukkan-shopfront.png"; width: parent.width; height: Math.min(parent.width, root.px(155)); fillMode: Image.PreserveAspectFit; smooth: true }
                 }
             }
 
@@ -589,12 +595,35 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.preferredHeight: px(40)
             spacing: px(28)
-            Text { text: "ZAMAN  /  DUKKAN"; color: zamanTheme.muted; font.pixelSize: px(12); font.letterSpacing: 1.5 }
+            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: store.activity || "ZAMAN  /  DUKKAN"; color: zamanTheme.muted; font.pixelSize: px(12); font.letterSpacing: 1.5 }
             Item { Layout.fillWidth: true }
             ControlHint { button: "A"; label: "Details"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "B"; label: "Back / exit"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "Y"; label: "Library"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
             ControlHint { button: "START"; label: "Search"; ink: zamanTheme.text; secondary: zamanTheme.muted; scaleFactor: root.uiScale }
+        }
+    }
+
+    Connections {
+        target: store
+        function onNavigateTransaction(id) { root.jobsOpen = true; activityPage.selectId(id); }
+    }
+    Shortcut { sequence: "Ctrl+T"; enabled: !root.keyboardOpen && !root.modal; onActivated: root.jobsOpen = true }
+    TransactionList {
+        id: activityPage
+        anchors.fill: parent
+        z: 28
+        visible: root.jobsOpen
+        backend: store
+        uiScale: root.uiScale
+        onBackRequested: root.jobsOpen = false
+        onCancelRequested: jobId => root.requestCancel(jobId)
+        onRetryRequested: jobId => { root.pendingJobId = jobId; root.modal = "retry"; root.modalChoice = 0; }
+        onGameRequested: appId => {
+            root.changeSection("Discover");
+            for (var i = 0; i < root.visibleGames.length; ++i) if (root.visibleGames[i].id === appId) {
+                root.selectedIndex = i; root.jobsOpen = false; root.openDetails(); return;
+            }
         }
     }
 
@@ -812,19 +841,19 @@ ApplicationWindow {
                         objectName: "detailTransactionProgress"
                         Layout.fillWidth: true
                         Layout.preferredHeight: implicitHeight
-                        visible: store.busy
+                        visible: root.selectedPending
                         stacked: true
-                        transaction: store
-                        gameName: root.activeTransactionName
+                        transaction: ({operation: root.selectedTransaction ? root.selectedTransaction.operation : "", progressPercent: root.selectedTransaction && typeof root.selectedTransaction.percent === "number" ? root.selectedTransaction.percent : -1, progressStage: root.selectedTransaction ? root.selectedTransaction.stage : "", busy: root.selectedPending})
+                        gameName: root.selectedGame ? root.selectedGame.name : ""
                         scaleFactor: root.uiScale
                         accent: zamanTheme.accent
                         ink: zamanTheme.text
                         muted: zamanTheme.muted
                         surface: zamanTheme.elevated
-                        onStopRequested: root.requestCancel()
+                        onStopRequested: root.requestCancel(root.selectedTransaction ? root.selectedTransaction.id : "")
                     }
                     RowLayout {
-                        visible: !store.busy
+                        visible: !root.selectedPending
                         Layout.fillWidth: true
                         Layout.fillHeight: false
                         Layout.preferredHeight: px(72)
@@ -835,21 +864,23 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             radius: px(13)
-                            color: store.busy || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.elevated : zamanTheme.accent
+                            color: root.selectedPending || store.requestPending || !store.workerAvailable || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.elevated : zamanTheme.accent
                             border.color: root.detailAction === 0 ? zamanTheme.accentStrong : "transparent"
                             border.width: root.detailAction === 0 ? 3 : 0
                             Text {
                                 anchors.centerIn: parent
                                 text: store.launchBusy ? "STARTING GAME…" : store.removalCheck ? "CHECKING GAME…"
+                                      : !store.workerAvailable ? "SERVICE UNAVAILABLE"
+                                      : store.requestPending ? "REQUESTING…"
                                       : !root.selectedGame ? "SELECT A GAME"
                                       : root.selectedGame.installed ? "PLAY"
                                       : !store.availabilityChecked ? "CHECKING AVAILABILITY"
                                       : root.selectedGame.available ? "INSTALL FROM FLATHUB" : "NOT AVAILABLE ON ARM64"
-                                color: store.busy || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.text : "#29221C"
+                                color: root.selectedPending || store.requestPending || !store.workerAvailable || store.launchBusy || store.removalCheck || !root.selectedGame || (!root.selectedGame.installed && !root.selectedGame.available) || root.detailAction !== 0 ? zamanTheme.text : "#29221C"
                                 font.pixelSize: px(19)
                                 font.weight: Font.DemiBold
                             }
-                            MouseArea { anchors.fill: parent; enabled: !store.busy && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 0; root.requestGameAction() } }
+                            MouseArea { anchors.fill: parent; enabled: !root.selectedPending && !store.requestPending && store.workerAvailable && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 0; root.requestGameAction() } }
                         }
                         Rectangle {
                             Layout.preferredWidth: px(205)
@@ -860,10 +891,10 @@ ApplicationWindow {
                             border.color: root.detailAction === 1 ? zamanTheme.accentStrong : "#506070"
                             border.width: root.detailAction === 1 ? 3 : 1
                             Text { anchors.centerIn: parent; text: "UNINSTALL"; color: root.detailAction === 1 ? "#29221C" : zamanTheme.text; font.pixelSize: px(18); font.weight: Font.DemiBold }
-                            MouseArea { anchors.fill: parent; enabled: !store.busy && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 1; root.requestUninstall() } }
+                            MouseArea { anchors.fill: parent; enabled: !root.selectedPending && !store.requestPending && store.workerAvailable && !store.launchBusy && !store.removalCheck; onClicked: { root.detailAction = 1; root.requestUninstall() } }
                         }
                     }
-                    Text { text: store.busy ? "X  Request stop" : "← / →  Action   ·   A  Select   ·   B  Back\n↑ / ↓  Scroll   ·   Y  View fullscreen"; color: zamanTheme.muted; font.pixelSize: px(13) }
+                    Text { text: root.selectedPending ? "X  Request stop · Activity shows queue details" : "← / →  Action   ·   A  Select   ·   B  Back\n↑ / ↓  Scroll   ·   Y  View fullscreen"; color: zamanTheme.muted; font.pixelSize: px(13) }
                 }
             }
         }
@@ -931,7 +962,7 @@ ApplicationWindow {
                 spacing: px(13)
                 Text { text: root.modalTitle; color: zamanTheme.text; font.pixelSize: px(33); font.weight: Font.DemiBold }
                 Text { Layout.fillWidth: true; text: root.modalMessage; color: zamanTheme.muted; font.pixelSize: px(19); wrapMode: Text.WordWrap; lineHeight: 1.2 }
-                Text { text: root.modal === "cancel" ? store.activeGame : root.pendingId; color: zamanTheme.muted; font.pixelSize: px(12) }
+                Text { text: (root.modal === "cancel" || root.modal === "retry") ? root.pendingJobId : root.pendingId; color: zamanTheme.muted; font.pixelSize: px(12) }
                 Item { Layout.fillHeight: true }
                 RowLayout {
                     Layout.fillWidth: true

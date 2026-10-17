@@ -8,23 +8,26 @@ Dukkan lets players discover, install, launch and remove a curated selection of
 games without leaving the console interface. The current prototype uses Flathub
 and user Flatpak installations, with architecture checks for Zaman's ARM64 system.
 
-**Status:** early prototype, version 0.3.2. The repository contains the current
-Sprint 4 source. It is not a payment platform or an unrestricted Flathub browser.
+**Status:** early prototype, version 0.4.0. The repository contains the current
+Sprint 5 source. It is not a payment platform or an unrestricted Flathub browser.
 
 ## Current features
 
 - Discover and Library views, with search across the curated catalog.
 - Game descriptions, local title artwork, screenshots and a full-screen gallery.
-- Installation/removal confirmations, live transaction progress and cancellation.
+- Independent background install/removal jobs with a persistent queue, verified
+  recovery, confirmations, live progress and cancellation.
 - Installed-game launch through Zaman Sessiond.
 - Pegasus Native Games synchronization after a verified install or removal.
 - Terminal transaction notifications through Zaman Notifications.
 - Controller and keyboard navigation, with an on-screen search keyboard.
 - A shared JSON catalog and read-only Zaman appearance settings.
 
-Install success requires a verified terminal result. Closing Dukkan does not turn
-its current transaction into an independent background download service. General
-Flathub search, payments and publisher self-service uploads are not implemented.
+Install success requires verified Flatpak postconditions. Accepted jobs continue
+when Dukkan closes; reopening reconnects to their state. Ordinary launches open
+Discover, while fresh transaction-notification links open Activity. Uninstall
+retains application saves. General Flathub search, payments and publisher
+self-service uploads are not implemented.
 
 ## Bring your game to Zaman
 
@@ -61,6 +64,13 @@ Launch within the graphical session so Wayland environment variables are present
 For managed launch and return to Pegasus, follow
 [session integration](docs/SESSION-INTEGRATION.md).
 
+Install/remove work requires the separate transaction service. Its
+[unit template](services/dukkan-transactions.service) references the accepted
+Sprint 5 development checkout; set its ExecStart to your actual checkout before
+enabling it. See [Sprint 5](docs/SPRINT5.md) for the socket API, persistence,
+recovery, lifecycle locks and notification delivery. Building the UI alone does
+not start the worker.
+
 ## Catalog and artwork
 
 Dukkan reads `/usr/local/share/zaman/catalog.json`, supplied by zaman-sessiond.
@@ -86,6 +96,7 @@ The shared catalog schema and editing commands live in
 | X / F5 | Refresh; X deletes a character during text entry |
 | Y | Switch Discover/Library; contextual keyboard/gallery action |
 | Shoulders / Page Up and Page Down | Previous/next screenshot in the gallery |
+| Ctrl+T | Activity |
 | Ctrl+Q | Quit |
 
 The displayed legend describes the current screen. Destructive confirmations
@@ -107,7 +118,7 @@ and reproduction steps with a bug report.
 
 Technical notes: [architecture](docs/ARCHITECTURE.md),
 [design system](docs/DESIGN-SYSTEM.md), [changes](docs/CHANGELOG.md), and
-[Sprint 4 publication](docs/sprint4-publication.md).
+[Sprint 5 publication](docs/sprint5-publication.md).
 
 ## License
 

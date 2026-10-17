@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Dukkan"));
     app.setOrganizationName(QStringLiteral("Kawn Electro"));
     app.setDesktopFileName(QStringLiteral("com.kawnelectro.Dukkan"));
-    app.setApplicationVersion(QStringLiteral("0.3.1"));
+    app.setApplicationVersion(QStringLiteral("0.4.0"));
 
     StoreBackend store;
     GamepadBridge pad;

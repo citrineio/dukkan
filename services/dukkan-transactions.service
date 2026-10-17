@@ -1,0 +1,17 @@
+[Unit]
+Description=Dukkan persistent background transactions
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/projects/zaman-sprint5/dukkan/tools/transactions.py serve
+Environment=ZAMAN_CATALOG_PATH=/usr/local/share/zaman/catalog.json
+Environment=ZAMAN_CATALOG_LIBEXEC=/usr/local/libexec/zaman
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

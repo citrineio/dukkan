@@ -31,6 +31,10 @@ TEXT_BAR = re.compile(r'[\u2580-\u259f\u2800-\u28ff]|\[[#=\-> .]{3,}\]')
 PR_SET_PDEATHSIG = 1
 
 
+class Busy(RuntimeError):
+    pass
+
+
 def emit(**fields):
     print(json.dumps(fields, ensure_ascii=False), flush=True)
 
@@ -103,7 +107,32 @@ def run(operation, app):
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(lock_fd)
-        raise RuntimeError('A managed game or Flatpak transaction is already active')
+        raise Busy('A managed game or Flatpak transaction is already active')
+    # Keep the accepted global lock policy. Fail closed on uncertain lifecycle
+    # state; CleanupFailed must block work even after its helper released the FD.
+    try:
+        ctl = os.environ.get('ZAMANCTL', '/usr/local/bin/zamanctl')
+        for arguments in (['installed-game', 'status'], ['status']):
+            check = subprocess.run([ctl, *arguments], capture_output=True, text=True, timeout=5)
+            if check.returncode:
+                raise Busy('Cannot verify game lifecycle; transaction remains queued')
+            if arguments[0] == 'installed-game':
+                match = re.search(r'(?:^|\s)phase=(\S+)', check.stdout)
+                phase = match[1] if match else ''
+                if phase not in ('Idle', 'Exited', 'Failed'):
+                    raise Busy('Waiting for managed-game cleanup or lifecycle verification')
+            fields = dict(line.split('=', 1) for line in check.stdout.splitlines() if '=' in line)
+            if arguments[0] == 'status' and fields.get('state') not in ('Idle', 'Failed'):
+                raise Busy('Waiting for the game to close')
+            if fields.get('state') in ('Active', 'Stopping'):
+                raise Busy('Waiting for the game to close')
+        check = subprocess.run(['/usr/bin/flatpak', 'ps', '--columns=application'],
+                               capture_output=True, text=True, timeout=5)
+        if check.returncode or check.stdout.strip():
+            raise Busy('Close running Flatpak applications before modifying shared runtimes')
+    except BaseException:
+        os.close(lock_fd)
+        raise
     if operation == 'install':
         argv = ['/usr/bin/flatpak', 'install', '--user', '--assumeyes',
                 '--arch=aarch64', 'flathub', f'app/{app}/aarch64/stable']
@@ -115,7 +144,7 @@ def run(operation, app):
     env.pop('FLATPAK_DEBUG', None)
     master, slave = pty.openpty()
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave,
-                             env=env, preexec_fn=child_setup, start_new_session=True)
+                             env=env, preexec_fn=child_setup, start_new_session=True, pass_fds=(lock_fd,))
     os.close(slave)
     stopping = False
     stop_deadline = None
@@ -187,6 +216,9 @@ def main():
     args = parser.parse_args()
     try:
         return run(args.operation, args.app)
+    except Busy as error:
+        emit(type='result', success=False, blocked=True, exit_code=3, message=str(error))
+        return 3
     except Exception as error:
         emit(type='result', success=False, exit_code=-1, message=str(error))
         return 1

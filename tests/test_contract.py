@@ -36,7 +36,8 @@ class PrototypeContractTests(unittest.TestCase):
         self.assertNotIn("bash -c", self.backend)
         self.assertNotIn("--delete-data", self.backend)
         self.assertIn("findGame(id)", self.backend)
-        self.assertIn(':/tools/flatpak-transaction.py', self.backend)
+        self.assertIn('dukkan-transactions/control.sock', self.backend)
+        self.assertNotIn('m_transaction = new QProcess', self.backend)
         relay = (ROOT / "tools/flatpak-transaction.py").read_text()
         self.assertIn('--assumeyes', relay)
 
@@ -51,7 +52,8 @@ class PrototypeContractTests(unittest.TestCase):
         self.assertNotIn("sudo ", self.backend)
         self.assertNotIn("systemctl", self.backend)
         self.assertNotIn("metadata.pegasus.txt", self.backend)
-        self.assertIn('QStringLiteral("library"), QStringLiteral("sync")', self.backend)
+        service = (ROOT / 'tools/transactions.py').read_text()
+        self.assertIn("'library', 'sync'", service)
 
     def test_qml_resources_in_build_manifest(self):
         cmake = (ROOT / "CMakeLists.txt").read_text()

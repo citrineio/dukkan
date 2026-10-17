@@ -18,6 +18,8 @@
 #include <QUrl>
 #include <QTimer>
 #include <QUuid>
+#include <QLocalSocket>
+#include <unistd.h>
 
 namespace {
 QString cachePath()
@@ -31,6 +33,11 @@ QString cachePath()
 StoreBackend::StoreBackend(QObject *parent) : QObject(parent)
 {
     refresh();
+    connect(&m_jobTimer, &QTimer::timeout, this, [this]() {
+        if (!m_pollPending) transactionRequest({{QStringLiteral("action"), QStringLiteral("snapshot")}}, true);
+    });
+    m_jobTimer.start(1000);
+    QTimer::singleShot(0, this, [this]() { transactionRequest({{QStringLiteral("action"), QStringLiteral("snapshot")}}, true); });
 }
 
 StoreBackend::~StoreBackend()
@@ -218,7 +225,7 @@ void StoreBackend::setActivity(const QString &message)
 
 void StoreBackend::refresh()
 {
-    if (m_busy || m_launchBusy || m_removalCheck) return;
+    if (m_launchBusy || m_removalCheck) return;
     ++m_listingGeneration;
     if (!loadCatalog()) return;
     const bool preserveActivity = m_refreshFromTransaction;
@@ -295,52 +302,22 @@ void StoreBackend::startListing(const QStringList &arguments, bool installedList
 void StoreBackend::installGame(const QString &id)
 {
     Game *g = findGame(id);
-    if (!g || !g->available || !m_availabilityChecked || g->installed || m_busy) return;
+    if (!g || !g->available || !m_availabilityChecked || g->installed || gamePending(id) || m_requestPending || !m_workerAvailable) return;
     if (authorize(id)) startTransaction(id, true);
 }
 
 void StoreBackend::removeGame(const QString &id)
 {
-    Game *g = findGame(id);
-    if (!g || !g->installed || m_busy || m_launchBusy || m_removalCheck) return;
-    if (!authorize(id)) return;
-    m_removalCheck = true;
-    emit launchChanged();
-    setActivity(QStringLiteral("Checking that the game has stopped…"));
-    QProcess *probe = new QProcess(this);
-    connect(probe, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, probe, id](int code, QProcess::ExitStatus status) {
-        if (!m_removalCheck) { probe->deleteLater(); return; }
-        const QString output = QString::fromUtf8(probe->readAllStandardOutput());
-        m_removalCheck = false;
-        emit launchChanged();
-        if (code != 0 || status != QProcess::NormalExit) {
-            setActivity(QStringLiteral("Uninstall unavailable: could not verify installed-game status."));
-        } else if (output.contains(QStringLiteral("phase=Starting")) ||
-                   output.contains(QStringLiteral("phase=Running")) ||
-                   output.contains(QStringLiteral("phase=Stopping")) ||
-                   output.contains(QStringLiteral("phase=CleanupFailed"))) {
-            setActivity(QStringLiteral("Close the managed game before uninstalling it."));
-        } else if (Game *game = findGame(id); game && game->installed && !m_busy) {
-            startTransaction(id, false);
-        }
-        probe->deleteLater();
-    });
-    connect(probe, &QProcess::errorOccurred, this, [this, probe](QProcess::ProcessError error) {
-        if (error != QProcess::FailedToStart) return;
-        m_removalCheck = false;
-        emit launchChanged();
-        setActivity(QStringLiteral("Uninstall unavailable: zamanctl could not start."));
-        probe->deleteLater();
-    });
-    probe->start(qEnvironmentVariable("ZAMANCTL", "/usr/local/bin/zamanctl"),
-                 {QStringLiteral("installed-game"), QStringLiteral("status")});
+    Game *game = findGame(id);
+    if (!game || !game->installed || gamePending(id) || m_launchBusy || m_requestPending || !m_workerAvailable) return;
+    if (authorize(id)) startTransaction(id, false);
 }
 
 void StoreBackend::playGame(const QString &id)
 {
     Game *game = findGame(id);
-    if (!game || !game->installed || m_busy || m_launchBusy || m_removalCheck) return;
+    if (!game || !game->installed || m_launchBusy || m_removalCheck) return;
+    if (m_busy) { setActivity(QStringLiteral("Finish or cancel pending transactions before starting a managed game.")); return; }
     if (!authorize(id)) return;
     m_launchBusy = true;
     emit launchChanged();
@@ -371,171 +348,129 @@ void StoreBackend::playGame(const QString &id)
                 {QStringLiteral("installed-game"), QStringLiteral("launch"), id});
 }
 
+bool StoreBackend::gamePending(const QString &id) const
+{
+    for (const auto &value : m_jobs) {
+        const auto job = value.toMap();
+        const auto phase = job.value(QStringLiteral("phase")).toString();
+        if (job.value(QStringLiteral("app")).toString() == id &&
+            !QStringList{"succeeded", "failed", "cancelled", "interrupted"}.contains(phase)) return true;
+    }
+    return false;
+}
+
 void StoreBackend::startTransaction(const QString &id, bool install)
 {
-    if (m_busy || m_launchBusy || m_removalCheck || !authorize(id)) return;
-    m_busy = true;
-    m_activeGame = id;
-    m_operation = install ? QStringLiteral("install") : QStringLiteral("remove");
-    m_progressPercent = -1;
-    m_progressStage = install ? QStringLiteral("Preparing installation…") : QStringLiteral("Preparing removal…");
-    m_progressBuffer.clear();
-    m_relaySucceeded = false;
-    m_relayMessage.clear();
-    emit progressChanged();
-    emit transactionChanged();
-    setActivity((install ? QStringLiteral("Installing ") : QStringLiteral("Removing ")) + id
-                + QStringLiteral("… This may take some time."));
-    if (!m_relayFile) {
-        m_relayFile = new QTemporaryFile(QDir::tempPath() + QStringLiteral("/dukkan-flatpak-XXXXXX.py"), this);
-        if (!m_relayFile->open()) {
-            m_relayFile->deleteLater();
-            m_relayFile = nullptr;
-            endTransaction(false, QStringLiteral("Could not prepare Flatpak progress relay"));
-            return;
-        }
-        QFile resource(QStringLiteral(":/tools/flatpak-transaction.py"));
-        if (!resource.open(QIODevice::ReadOnly)) {
-            m_relayFile->deleteLater();
-            m_relayFile = nullptr;
-            endTransaction(false, QStringLiteral("Flatpak progress relay resource is missing"));
-            return;
-        }
-        const QByteArray source = resource.readAll();
-        if (m_relayFile->write(source) != source.size() || !m_relayFile->flush()) {
-            m_relayFile->deleteLater();
-            m_relayFile = nullptr;
-            endTransaction(false, QStringLiteral("Could not write Flatpak progress relay"));
-            return;
-        }
-    }
-    m_transaction = new QProcess(this);
-    m_transaction->setProcessChannelMode(QProcess::SeparateChannels);
-    const QStringList args{m_relayFile->fileName(), install ? QStringLiteral("install") : QStringLiteral("uninstall"), id};
-    QProcess *proc = m_transaction;
-    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
-        consumeRelayOutput(proc->readAllStandardOutput());
-    });
-    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, proc](int code, QProcess::ExitStatus status) {
-        if (proc != m_transaction) return;
-        consumeRelayOutput(proc->readAllStandardOutput());
-        const QString errors = QString::fromUtf8(proc->readAllStandardError()).trimmed();
-        endTransaction(code == 0 && status == QProcess::NormalExit && m_relaySucceeded,
-                       m_relayMessage.isEmpty() ? errors : m_relayMessage);
-        proc->deleteLater();
-    });
-    connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError error) {
-        if (proc != m_transaction || error != QProcess::FailedToStart) return;
-        endTransaction(false, QStringLiteral("Could not start Python progress relay"));
-        proc->deleteLater();
-    });
-    proc->start(QStringLiteral("/usr/bin/python3"), args);
+    if (m_requestPending || !m_workerAvailable || gamePending(id) || !authorize(id)) return;
+    transactionRequest({{QStringLiteral("action"), QStringLiteral("submit")},
+        {QStringLiteral("app"), id}, {QStringLiteral("operation"), install ? "install" : "uninstall"},
+        {QStringLiteral("request"), QUuid::createUuid().toString(QUuid::Id128)}});
 }
 
-void StoreBackend::endTransaction(bool success, const QString &details)
+void StoreBackend::cancelTransaction() { cancelJob(m_activeJob); }
+void StoreBackend::cancelJob(const QString &id)
 {
-    const QString id = m_activeGame;
-    const QString op = m_operation;
-    m_transaction = nullptr;
-    m_busy = false;
+    if (!id.isEmpty() && !m_requestPending && m_workerAvailable)
+        transactionRequest({{QStringLiteral("action"), QStringLiteral("cancel")}, {QStringLiteral("id"), id}});
+}
+void StoreBackend::retryJob(const QString &id)
+{
+    if (!id.isEmpty() && !m_requestPending && m_workerAvailable)
+        transactionRequest({{QStringLiteral("action"), QStringLiteral("retry")}, {QStringLiteral("id"), id},
+            {QStringLiteral("request"), QUuid::createUuid().toString(QUuid::Id128)}});
+}
+
+void StoreBackend::transactionRequest(const QJsonObject &request, bool poll)
+{
+    if (poll) m_pollPending = true;
+    else { m_requestPending = true; emit jobsChanged(); }
+    auto socket = new QLocalSocket(this);
+    auto buffer = new QByteArray;
+    auto finished = new bool(false);
+    auto finish = [this, socket, buffer, finished, poll](bool success, const QString &error) {
+        if (*finished) return;
+        *finished = true;
+        if (poll) m_pollPending = false;
+        else m_requestPending = false;
+        m_workerAvailable = success;
+        if (!success) setActivity(error);
+        emit jobsChanged();
+        socket->abort();
+        socket->deleteLater();
+    };
+    connect(socket, &QObject::destroyed, [buffer, finished]() { delete buffer; delete finished; });
+    connect(socket, &QLocalSocket::connected, this, [socket, request]() {
+        socket->write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+    });
+    connect(socket, &QLocalSocket::readyRead, this, [this, socket, buffer, finished, finish, poll]() {
+        if (*finished) return;
+        *buffer += socket->readAll();
+        if (buffer->size() > 2097152) { finish(false, QStringLiteral("Transaction service reply is too large")); return; }
+        if (!buffer->contains('\n')) return;
+        const auto object = QJsonDocument::fromJson(buffer->left(buffer->indexOf('\n'))).object();
+        if (object.value("type").toString() != "transactions") {
+            finish(false, object.value("error").toString(QStringLiteral("Invalid transaction service reply"))); return;
+        }
+        applyTransactionSnapshot(object);
+        if (!poll) setActivity(QStringLiteral("Transaction request accepted. Work continues when Dukkan closes."));
+        finish(true, {});
+    });
+    connect(socket, &QLocalSocket::errorOccurred, this, [finish](QLocalSocket::LocalSocketError) {
+        finish(false, QStringLiteral("Transaction service unavailable. Accepted jobs remain saved; check dukkan-transactions.service."));
+    });
+    auto timer = new QTimer(socket);
+    timer->setSingleShot(true);
+    connect(timer, &QTimer::timeout, this, [finish]() { finish(false, QStringLiteral("Transaction reply timed out. Check Activity before submitting again.")); });
+    timer->start(5000);
+    const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR", QStringLiteral("/run/user/") + QString::number(getuid()));
+    socket->connectToServer(runtime + QStringLiteral("/dukkan-transactions/control.sock"));
+}
+
+void StoreBackend::applyTransactionSnapshot(const QJsonObject &snapshot)
+{
+    const auto previous = m_jobs;
+    m_jobs = snapshot.value("jobs").toArray().toVariantList();
+    m_activeJob.clear();
     m_activeGame.clear();
     m_operation.clear();
+    m_progressStage.clear();
     m_progressPercent = -1;
-    m_progressStage = success ? QStringLiteral("Completed") : QStringLiteral("Stopped or failed");
-    m_progressBuffer.clear();
-    emit progressChanged();
-    emit transactionChanged();
-    setActivity(success
-        ? (op == QStringLiteral("install") ? QStringLiteral("Installed: ") : QStringLiteral("Removed: ")) + id
-        : QStringLiteral("Transaction failed: ") + details.left(220));
-    if (!id.isEmpty()) {
-        QString name = id;
-        if (auto game = findGame(id)) name = game->name;
-        const QString helper = qEnvironmentVariable("ZAMAN_NOTIFICATION_CLIENT",
-            QDir::homePath() + QStringLiteral("/.local/libexec/zaman-notifications"));
-        if (QFileInfo::exists(helper)) {
-            QJsonObject event{{QStringLiteral("source"), QStringLiteral("Dukkan")},
-                {QStringLiteral("key"), QStringLiteral("transaction:") + QUuid::createUuid().toString(QUuid::WithoutBraces)},
-                {QStringLiteral("title"), success ? (op == QStringLiteral("install") ? QStringLiteral("Installation complete") : QStringLiteral("Game removed")) : QStringLiteral("Installation or removal stopped")},
-                {QStringLiteral("body"), success ? name : name + QStringLiteral(": ") + details.left(400)},
-                {QStringLiteral("category"), QStringLiteral("install")},
-                {QStringLiteral("state"), success ? QStringLiteral("ready") : QStringLiteral("error")}};
-            auto notification = new QProcess(this);
-            notification->setStandardOutputFile(QProcess::nullDevice());
-            notification->setStandardErrorFile(QProcess::nullDevice());
-            connect(notification, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), notification, &QObject::deleteLater);
-            connect(notification, &QProcess::errorOccurred, notification, &QObject::deleteLater);
-            QTimer::singleShot(2500, notification, [notification]() { notification->kill(); });
-            notification->start(QStringLiteral("/usr/bin/python3"), {helper, QStringLiteral("event"), QStringLiteral("--json"), QString::fromUtf8(QJsonDocument(event).toJson(QJsonDocument::Compact))});
+    m_busy = false;
+    for (const auto &value : m_jobs) {
+        const auto job = value.toMap();
+        const auto phase = job.value("phase").toString();
+        const bool terminal = QStringList{"succeeded", "failed", "cancelled", "interrupted"}.contains(phase);
+        if (!terminal && m_activeJob.isEmpty()) {
+            m_busy = true;
+            m_activeJob = job.value("id").toString();
+            m_activeGame = job.value("app").toString();
+            m_operation = job.value("operation").toString() == "install" ? "install" : "remove";
+            m_progressStage = job.value("stage").toString();
+            m_progressPercent = job.value("percent").isNull() ? -1 : job.value("percent").toInt();
+        }
+        if (terminal) for (const auto &oldValue : previous) {
+            const auto old = oldValue.toMap();
+            if (old.value("id") == job.value("id") && old.value("phase") != job.value("phase")) {
+                emit transactionFinished(job.value("app").toString(), job.value("operation").toString(), phase == "succeeded");
+                // Only refresh local installation state; the service owns Pegasus sync and notifications.
+                startListing({"list", "--user", "--app", "--columns=ref:f"}, true, true);
+            }
         }
     }
-    emit transactionFinished(id, op, success);
-    m_refreshFromTransaction = true;
-    refresh();
-    if (success) syncPegasusLibrary(id, op);
-}
-
-void StoreBackend::syncPegasusLibrary(const QString &id, const QString &operation)
-{
-    const int generation = ++m_librarySyncGeneration;
-    setActivity((operation == QStringLiteral("install") ? QStringLiteral("Installed: ")
-                : QStringLiteral("Removed: ")) + id + QStringLiteral(". Updating Pegasus library…"));
-    QProcess *sync = new QProcess(this);
-    connect(sync, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, sync, generation, id, operation](int code, QProcess::ExitStatus status) {
-        if (generation == m_librarySyncGeneration && !m_busy && !m_launchBusy) {
-            const QString result = (operation == QStringLiteral("install")
-                ? QStringLiteral("Installed: ") : QStringLiteral("Removed: ")) + id;
-            const QString error = QString::fromUtf8(sync->readAllStandardError()).trimmed();
-            setActivity(code == 0 && status == QProcess::NormalExit
-                ? result + QStringLiteral(". Pegasus library updated.")
-                : result + QStringLiteral(". Pegasus sync failed: ")
-                    + (error.isEmpty() ? QStringLiteral("run zamanctl library sync") : error.left(160)));
-        }
-        sync->deleteLater();
-    });
-    connect(sync, &QProcess::errorOccurred, this, [this, sync, generation, id](QProcess::ProcessError error) {
-        if (error != QProcess::FailedToStart) return;
-        if (generation == m_librarySyncGeneration && !m_busy && !m_launchBusy)
-            setActivity(QStringLiteral("Transaction completed for ") + id
-                        + QStringLiteral(". Pegasus sync could not start; run zamanctl library sync."));
-        sync->deleteLater();
-    });
-    sync->start(qEnvironmentVariable("ZAMANCTL", "/usr/local/bin/zamanctl"),
-                {QStringLiteral("library"), QStringLiteral("sync")});
-}
-
-void StoreBackend::cancelTransaction()
-{
-    if (!m_transaction || !m_busy) return;
-    setActivity(QStringLiteral("Requesting transaction cancellation…"));
-    m_transaction->terminate();
-}
-
-void StoreBackend::consumeRelayOutput(const QByteArray &data)
-{
-    m_progressBuffer += data;
-    if (m_progressBuffer.size() > 65536)
-        m_progressBuffer = m_progressBuffer.right(32768);
-    int boundary;
-    while ((boundary = m_progressBuffer.indexOf('\n')) >= 0) {
-        const QByteArray row = m_progressBuffer.left(boundary);
-        m_progressBuffer.remove(0, boundary + 1);
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(row, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !document.isObject()) continue;
-        const QJsonObject event = document.object();
-        const QString type = event.value(QStringLiteral("type")).toString();
-        if (type == QStringLiteral("progress")) {
-            const QString stage = event.value(QStringLiteral("stage")).toString();
-            if (!stage.isEmpty()) m_progressStage = stage;
-            const QJsonValue percent = event.value(QStringLiteral("percent"));
-            m_progressPercent = percent.isDouble() ? qBound(0, percent.toInt(), 100) : -1;
-            emit progressChanged();
-        } else if (type == QStringLiteral("result")) {
-            m_relaySucceeded = event.value(QStringLiteral("success")).toBool(false);
-            m_relayMessage = event.value(QStringLiteral("message")).toString();
-        }
+    emit transactionChanged();
+    emit progressChanged();
+    if (previous != m_jobs) emit jobsChanged();
+    const auto navigation = snapshot.value("navigation").toObject();
+    const auto nonce = navigation.value("nonce").toString();
+    const auto target = navigation.value("id").toString();
+    bool knownTarget = false;
+    for (const auto &value : m_jobs) {
+        if (value.toMap().value("id").toString() == target) { knownTarget = true; break; }
+    }
+    if (knownTarget && m_navigation.take(nonce, target)) {
+        emit navigateTransaction(target);
+    } else if (!m_navigation.error().isEmpty() && nonce != m_failedNavigationNonce) {
+        m_failedNavigationNonce = nonce;
+        qWarning().noquote() << m_navigation.error();
     }
 }

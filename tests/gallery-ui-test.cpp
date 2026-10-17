@@ -61,6 +61,14 @@ int main(int argc, char **argv)
 QtObject {
     property var games: []
     property string catalogError: ""
+    property var jobs: busy ? [{id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", app: activeGame, name: "Test Game", operation: operation, phase: "running", percent: progressPercent < 0 ? null : progressPercent, stage: progressStage, error: "", libraryError: ""}] : []
+    property string activeJob: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    property bool workerAvailable: true
+    property bool requestPending: false
+    signal navigateTransaction(string id)
+    function gamePending(id) { return jobs.some(job => job.app === id) }
+    function cancelJob(id) { cancellations++ }
+    function retryJob(id) {}
     property bool busy: false
     property bool launchBusy: false
     property bool removalCheck: false
@@ -104,6 +112,16 @@ QtObject {
     window->setVisibility(QWindow::Windowed);
     window->resize(1920, 1080);
     window->setProperty("enableGamepadActions", true);
+    pump();
+    check(window->property("section").toString() == "Discover" && !window->property("jobsOpen").toBool(),
+          "ordinary launch opens Discover");
+    check(QMetaObject::invokeMethod(mock, "navigateTransaction", Q_ARG(QString, QString(32, 'a'))),
+          "fresh notification navigation reaches QML");
+    pump();
+    check(window->property("jobsOpen").toBool(), "explicit transaction navigation opens Activity");
+    action(window, "back");
+    check(!window->property("jobsOpen").toBool() && window->property("section").toString() == "Discover",
+          "Back from Activity returns to Discover");
     check(QMetaObject::invokeMethod(window, "openDetails"), "details opens"); pump();
     action(window, "right"); // Select Uninstall before opening the viewer.
     action(window, "nextImage");

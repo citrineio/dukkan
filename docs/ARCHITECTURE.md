@@ -1,62 +1,47 @@
-# Architecture and v0.3 decision log
+# Current architecture — Sprint 5 / v0.4.0
 
-## Actual v0.2 boundaries
+Dukkan is a Qt Quick storefront client with a separate Python user service owning
+accepted Flatpak operations. The source is independent of Bazaar. It uses the
+existing user Flatpak installation, shared Zaman catalog and lifecycle helpers.
 
-```text
-QML (Main.qml)
-  ⇅ context property (StoreBackend)
-C++ Qt backend
-  ├── QtNetwork: Flathub AppStream public HTTP endpoint
-  ├── asynchronous QProcess: `flatpak list`, `remote-ls`, `install`, `uninstall`
-  └── local JSON cache of metadata
-QML controller events ← optional SDL2 GameController bridge
-```
+## Client
 
-There is **no Bazaar code** in this package. There is **no Flatpak SDK** in the build. All installations happen into the already-configured **user** Flatpak installation.
+`Main.qml` provides Discover, Library, game details, gallery, confirmations and
+Activity. `StoreBackend` reads metadata through Qt Network, performs local discovery
+with asynchronous QProcesses, and exchanges bounded newline-delimited JSON with
+`tools/transactions.py` over a private Unix socket. The UI does not own a modifying
+Flatpak process. SDL2 optionally provides gamepad actions for the active window.
 
-## Catalog trust
+Ordinary launches open Discover. Explicit transaction links open Activity. Recently
+handled navigation nonces are atomically persisted in a private client marker so
+an old service snapshot does not reopen Activity on a new launch.
 
-The four seed game identifiers are hard-coded in `data/games.json`. Application availability must also be confirmed by `flatpak remote-ls` on the actual target host (aarch64). HTTP API JSON is used for descriptions and art, not to authorize arbitrary installs. Metadata URLs for artwork are limited to HTTPS Flathub hosts.
+## Worker and durable state
 
-No full catalog enumeration or dynamic public search is implemented. Search is a client-side filter of four curated games. Remote availability is determined by CLI, not by the HTTP API.
+The independent `dukkan-transactions.service` owns a SQLite queue, stable job and
+request IDs, one active worker, recovery, terminal-result delivery and separate
+library-publication retry. Closing the UI leaves accepted work running. The
+service reconciles uncertain work against actual Flatpak state rather than trusting
+exit status alone. Uninstall preserves application data.
 
-## UX / controller integration
+The relay and managed-game helper retain the same exclusive transaction/lifetime
+lock. Session lifecycle inspection fails closed. This sprint does not enable
+parallel runtime modification during managed gameplay or change Guide ownership.
 
-The SDL2 bridge receives GameController events and emits QML actions only if Dukkan owns the active window. This helps prevent background controller events driving a hidden store window. A physical controller is not yet tested. The Qt keyboard path works regardless of SDL2 availability. Guide is intentionally not bound.
+## Integration boundaries
 
-**Do not embed the storefront in the Quickshell menu** at this stage. A dedicated fullscreen Qt Quick window is more maintainable; Quickshell's role is system overlays. We can share theme tokens with the Zaman menu and Pegasus once an appearance schema exists.
+- The shared catalog authorizes enabled application IDs. HTTP metadata provides
+  descriptions and artwork; it does not authorize arbitrary packages.
+- Sessiond owns installed-game/storefront lifecycle and delegates Pegasus sync to
+  the accepted library helper. Dukkan does not rewrite Pegasus configuration.
+- Zaman Menu owns the notification server, durable receipt watermark, history,
+  DND, toast presentation, live activity and validated transaction handoff.
+- Successful results use verified postconditions; progress is an observed current
+  Flatpak step and may remain indeterminate. The displayed app size is not a full
+  runtime-inclusive transaction estimate.
 
-## Important omissions
-
-**Deferred by Kadhem on 14 October 2026:** the complete Flatpak transaction
-download estimate and the multi-screenshot detail gallery are future-release
-work. The current Sprint 2 closeout does not depend on either feature.
-
-1. Dukkan shows the app ref download size reported by Flathub when available. This is not a full transaction estimate: required runtimes and extensions can add substantial downloads. A preflight that totals the complete Flatpak transaction remains open.
-2. Flatpak transactions still use a CLI relay rather than a structured Flatpak API.
-   Sprint 2 reports observed per-operation progress, or an indeterminate state
-   when Flatpak does not provide a percentage.
-3. Sprint 3 adds a paired, four-game Pegasus Native Games sync through
-   `zamanctl library sync` after verified transactions. The Zaman helper owns
-   its generated metadata and marker files; Dukkan does not edit Pegasus
-   configuration. The paired Zaman theme watches the helper's signal filename
-   and invokes Pegasus's in-process game-list reload after a changed sync.
-4. No application-permission explanation or security warning screen beyond install confirmation.
-5. No transactional retry queue or multiple concurrent installs.
-6. No verified compatibility grading (graphics, controls, performance).
-7. No dynamic theme packages.
-8. Multiple screenshots per game are deferred. The current catalog selects only the first usable Flathub screenshot (or an icon fallback). A future revision should show a navigable gallery on the detail page, preserve the source aspect ratio, and handle missing/offline images without blocking installation.
-
-## Recommended v0.3 sequence
-
-- Validate QtWayland rendering, Sway fullscreen, and InputPlumber → SDL controller mapping on Dragon Q6A.
-- Add Flatpak-specific sessiond launch targets, ensure graceful exit, focus, menu pause/guide behavior and return to Pegasus.
-- Implement a proper public Flathub catalog search indexed by real aarch64 availability, local AppStream for offline browsing, and curation rules for non-game apps.
-- Move installer operations into a worker/service using libflatpak APIs; provide structured progress, cancel, queued transactions, disk use, and runtime permissions.
-- Introduce a shared Zaman theme token format for Quickshell/Pegasus/Dukkan.
-
-## C++ developer notes
-
-Qt6 required: Core, Gui, Quick, QuickControls2, Network. Optional: SDL2 development package. `qt_add_resources` embeds the QML and JSON into `qrc:/` to allow running from arbitrary paths. `cmake --build build -j2` limits memory usage on the SBC.
-
-Build has not been executed by the author because Qt6 dev headers/tools are absent in the artifact-generation container. Treat the first compile/run on Zaman as an integration checkpoint; please share the first error if it fails.
+The complete protocol, storage paths, recovery and validation boundaries are in
+[SPRINT5.md](SPRINT5.md). The earlier decision log is retained as
+[historical v0.3 architecture](history/architecture-v0.3.md); it is not the current
+feature inventory. Public catalog search, payments, publisher self-service,
+compatibility grading and structured libflatpak transactions remain future work.

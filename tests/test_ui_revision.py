@@ -34,7 +34,7 @@ class UiRevisionTests(unittest.TestCase):
     def test_protected_transaction_and_progress_states(self):
         self.assertIn('Q_PROPERTY(int progressPercent', HEADER)
         self.assertIn('Q_PROPERTY(QString progressStage', HEADER)
-        self.assertIn('void StoreBackend::consumeRelayOutput', STORE)
+        self.assertIn('void StoreBackend::applyTransactionSnapshot', STORE)
         track = (ROOT / 'qml/ProgressTrack.qml').read_text()
         progress = (ROOT / 'qml/TransactionProgress.qml').read_text()
         self.assertIn('track.percent < 0', track)

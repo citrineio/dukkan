@@ -23,12 +23,14 @@ class ControllerFlowTests(unittest.TestCase):
         self.assertIn('if (action === "left" || action === "up") modalChoice = 0', QML)
         self.assertIn('else if (action === "right" || action === "down") modalChoice = 1', QML)
         self.assertIn('else if (action === "back") dismissModal()', QML)
-        self.assertIn('else if (modal === "cancel") store.cancelTransaction()', QML)
+        self.assertIn('else if (modal === "cancel") store.cancelJob(pendingJobId)', QML)
         self.assertIn('"Keep running"', QML)
 
-    def test_b_from_discover_returns_and_active_transactions_are_protected(self):
+    def test_b_from_discover_leaves_background_transactions_running(self):
         self.assertIn('function leaveStore()', QML)
-        self.assertIn('if (store.busy) { requestCancel(); return }', QML)
+        leave = QML.split('function leaveStore()', 1)[1].split('function changeSection', 1)[0]
+        self.assertNotIn('requestCancel', leave)
+        self.assertIn('root.close()', leave)
         self.assertIn('else leaveStore()', QML)
         self.assertIn('root.close()', QML)
         self.assertIn('sequence: "Ctrl+Q"', QML)

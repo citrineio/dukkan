@@ -14,6 +14,8 @@ int main(int argc, char **argv) {
     QNetworkProxy::setApplicationProxy(QNetworkProxy(QNetworkProxy::HttpProxy,"127.0.0.1",9));
     QTemporaryDir dir;
     qputenv("XDG_CACHE_HOME",dir.path().toUtf8());
+    qputenv("XDG_STATE_HOME",dir.filePath("state").toUtf8());
+    qputenv("XDG_RUNTIME_DIR",dir.filePath("runtime").toUtf8());
     const auto path=dir.filePath("catalog.json");
     qputenv("ZAMAN_CATALOG_PATH",path.toUtf8());
     qputenv("PATH",dir.path().toUtf8()+":"+qgetenv("PATH"));

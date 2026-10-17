@@ -11,7 +11,7 @@ class StartupRegressionTests(unittest.TestCase):
     def test_qml_text_letter_spacing_is_font_property(self):
         # Main.qml:338 used `letterSpacing: 1.2` directly on a Text item.
         self.assertNotRegex(QML, r"(?<!font\.)\bletterSpacing\s*:")
-        self.assertIn("font.letterSpacing: 1.2", QML)
+        self.assertRegex(QML, r"font\.letterSpacing:\s*[0-9]")
 
     def test_all_flatpak_child_processes_cleaned_up(self):
         self.assertIn("findChildren<QProcess *>()", CPP)

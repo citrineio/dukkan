@@ -48,6 +48,24 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual([row['percent'] for row in rows], [67, None, 12])
         self.assertEqual(pending, b'')
 
+    def test_lifecycle_uncertainty_and_cleanup_failed_never_modify_flatpak(self):
+        for state in ['generation=2 app=org.example.Game name=Game phase=CleanupFailed error=uncertain ready=false\n', 'state=Active\n', 'phase=Running\n']:
+            with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'XDG_RUNTIME_DIR': root}), \
+                    patch.object(transaction, 'authorize'), \
+                    patch.object(transaction.subprocess, 'Popen') as child, \
+                    patch.object(transaction.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, state, '')):
+                with self.assertRaises(transaction.Busy):
+                    transaction.run('install', 'org.example.Game')
+                child.assert_not_called()
+
+    def test_failed_status_probe_never_starts_a_transaction(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'XDG_RUNTIME_DIR': root}), \
+                patch.object(transaction, 'authorize'), patch.object(transaction.subprocess, 'Popen') as child, \
+                patch.object(transaction.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'bus unavailable')):
+            with self.assertRaises(transaction.Busy):
+                transaction.run('uninstall', 'org.example.Game')
+            child.assert_not_called()
+
     def test_real_pty_relay_confirms_postcondition(self):
         original_popen = subprocess.Popen
         app = 'org.openttd.OpenTTD'
@@ -64,14 +82,14 @@ class TransactionTests(unittest.TestCase):
                 patch.object(transaction.subprocess, 'Popen', side_effect=fake_popen), \
                 patch.object(transaction.subprocess, 'run') as verify:
             verify.return_value.returncode = 0
-            verify.return_value.stdout = f'{app}/aarch64/stable\n'
+            verify.side_effect = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, f'{app}/aarch64/stable\n' if 'list' in argv else 'phase=Exited\nstate=Idle\n' if 'status' in argv else '', '')
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 self.assertEqual(transaction.run('install', app), 0)
             events = [json.loads(line) for line in out.getvalue().splitlines()]
             self.assertIn(45, [event.get('percent') for event in events])
             self.assertTrue(events[-1]['success'])
-            verify.return_value.stdout = ''
+            verify.side_effect = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, 'phase=Exited\nstate=Idle\n' if 'status' in argv else '', '')
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(transaction.run('install', app), 1)
 

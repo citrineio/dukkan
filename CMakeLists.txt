@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(dukkan VERSION 0.3.2 LANGUAGES CXX)
+project(dukkan VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,8 @@ qt_add_executable(dukkan
 qt_add_resources(dukkan "dukkan_assets"
     PREFIX "/"
     FILES
+        assets/dukkan-shopfront.png
+        qml/TransactionList.qml
         qml/Main.qml
         qml/ButtonDiamond.qml
         qml/GameArt.qml
@@ -34,7 +36,6 @@ qt_add_resources(dukkan "dukkan_assets"
         qml/GalleryButton.qml
         qml/ProgressTrack.qml
         qml/TransactionProgress.qml
-        tools/flatpak-transaction.py
 )
 
 target_link_libraries(dukkan PRIVATE
@@ -65,6 +66,10 @@ if(BUILD_TESTING)
     target_link_libraries(catalog-backend-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME catalog-backend COMMAND catalog-backend-test)
     set_tests_properties(catalog-backend PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(transaction-navigation-test tests/transaction-navigation-test.cpp)
+    target_include_directories(transaction-navigation-test PRIVATE src)
+    target_link_libraries(transaction-navigation-test PRIVATE Qt6::Core)
+    add_test(NAME transaction-navigation COMMAND transaction-navigation-test)
     add_executable(gamecatalog-test tests/gamecatalog-test.cpp src/gamecatalog.cpp)
     target_include_directories(gamecatalog-test PRIVATE src)
     target_link_libraries(gamecatalog-test PRIVATE Qt6::Core)
